@@ -2,13 +2,16 @@
 No more dealing with cloud services or crappy proprietary apps for your home sauna - this is an open-source sauna controller allowing you to control your sauna from anywhere but without any commercial/cloud dependenceies via ESPHome + Home Assistant.
 
 The design offers robust controls of both the heater and lights, along with safeties similar to a commercial unit, including: 
-- up to 10.5kw, 240 V single-phase heater driven by a **24 VDC coil contactor**
-- **Hardware manual-reset high-limit** in series with the coil (failsafe)
-- Dual **PT100** sensors with MAX31865 (ceiling control + bench monitor)
-- **Door safety** (instant off + timeout fault)
+- Contol of a heater via a **24 VDC coil contactor**
+- Dual highly accuracy **PT100** temp sensors (primary high on the wall + one closer to the sitting bench)
 - **RGBW under-bench lighting** (24 V, PWM via MOSFETs)
+
+Safeties include
+- **Hardware manual-reset high-limit** in series with the coil (failsafe)
+- **Door safety** (instant off + timeout fault)
 - Strong fault model (latching) + optional **contactor auxiliary feedback** + **high-limit status** sensing
-- **Task watchdog** enabled (30 s) for safety
+
+While the ESP handles the actual control of the sauna, currently all input is done via Home Assistant - in the future I'll add a physical hardware controller based on a second ESP Board + TFT Display + rotary encoder that can be installed at the door of the sauna.
 
 > ⚠️ **Electrical safety**: This project switches lethal voltages. Get a licensed electrician/PE to review & install. Use appropriately rated components and follow local code.
 
