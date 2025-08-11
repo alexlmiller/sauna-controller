@@ -18,6 +18,11 @@ While the ESP handles the actual control of the sauna, currently all input is do
 ---
 
 ## Hardware Design Overview
+The total cost for the hardware should be a bit <$500 + whatever lighting you choose to use
+
+The single largest cost is the contactor ($100-$150 USD, depending on size) - while there are cheaper options out there, this is the heart of the system and handles a lot of power flowing through it
+
+The other big cost is that various DIN rail parts - I chose to use DIN rail components in order to keep things very clean, but if that's not a priority, you can skip many of those and save $50-$100.
 
 ### Power & Control Architecture
 - **24 VDC single rail** (Mean Well HDR-150-24) feeds:
