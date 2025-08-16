@@ -1,12 +1,18 @@
 esphome:
-  name: sauna_controller
+  name: sauna-controller
   friendly_name: Sauna Controller
-  comment: Full sauna controller with RGBW lighting, door sensor, manual mode, safeties
-  platform: ESP32
-  board: esp32dev
   project:
     name: sauna.open_controller
     version: "1.0"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_TASK_WDT: "y"
+      CONFIG_ESP_TASK_WDT_TIMEOUT_S: "30"
+
 
 # Enable logging with dynamic debug control
 logger:
@@ -15,6 +21,7 @@ logger:
 
 # Enable OTA
 ota:
+  platform: esphome
   password: !secret ota_password
 
 # Enable API for Home Assistant
@@ -27,16 +34,9 @@ wifi:
   password: !secret wifi_password
   ap:
     ssid: "SaunaController Fallback"
-    password: "fallbackpw"
+    password: !secret wifi_fallback_pw
 
 captive_portal:
-
-# Enable Watchdog (safety-critical)
-esp32:
-  board: esp32dev
-  framework:
-    type: arduino
-  watchdog_timeout: 30s
 
 # Global variables
 globals:
@@ -61,8 +61,10 @@ globals:
     restore_value: no
     initial_value: "0"
 
-# Switch for master enable
+# Switches
 switch:
+
+  # Master Enable
   - platform: template
     name: "Sauna Master Enable"
     id: master_enable
@@ -74,8 +76,7 @@ switch:
       - logger.log: "Master Disabled"
       - switch.turn_off: coil_relay
 
-# Coil Relay
-switch:
+  # Coil Relay
   - platform: gpio
     pin: GPIO16
     id: coil_relay
@@ -106,14 +107,21 @@ binary_sensor:
     filters:
       - delayed_on: 100ms
 
+# SPI bus for MAX31865s
+spi:
+  id: bus_a
+  clk_pin: GPIO14
+  mosi_pin: GPIO13
+  miso_pin: GPIO12
+
 # Sensors
 sensor:
   - platform: max31865
     cs_pin: GPIO5
     spi_id: bus_a
-    rtd_nominal: 100.0
+    rtd_nominal_resistance: 100.0
     reference_resistance: 430.0
-    wires: 3
+    rtd_wires: 3
     name: "Ceiling Temp"
     id: ceiling_temp_f
     unit_of_measurement: "°F"
@@ -124,22 +132,15 @@ sensor:
   - platform: max31865
     cs_pin: GPIO4
     spi_id: bus_a
-    rtd_nominal: 100.0
+    rtd_nominal_resistance: 100.0
     reference_resistance: 430.0
-    wires: 3
+    rtd_wires: 3
     name: "Bench Temp"
     id: bench_temp_f
     unit_of_measurement: "°F"
     accuracy_decimals: 1
     filters:
       - lambda: return x * 9.0 / 5.0 + 32.0;
-
-# SPI bus for MAX31865s
-spi:
-  id: bus_a
-  clk_pin: GPIO14
-  mosi_pin: GPIO13
-  miso_pin: GPIO12
 
 # Climate control
 climate:
@@ -151,13 +152,19 @@ climate:
     min_idle_time: 30s
     heat_deadband: 2°F
     heat_overrun: 2°F
-    default_target_temperature_low: 180°F
-    default_target_temperature_high: 180°F
     visual:
       min_temperature: 150°F
       max_temperature: 200°F
       temperature_step: 1°F
     id: sauna_thermostat
+    preset:
+      - name: "Standard"
+        default_target_temperature_low: 180°F
+    default_preset: "Standard"
+    heat_action:
+      - switch.turn_on: coil_relay
+    idle_action:
+      - switch.turn_off: coil_relay
 
 # Lighting
 output:
@@ -248,4 +255,3 @@ text_sensor:
     id: last_trip_reason_text
     lambda: |-
       return id(last_trip_reason).c_str();
-
