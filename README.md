@@ -86,15 +86,15 @@ The other big cost is that various DIN rail parts - I chose to use DIN rail comp
 - **Driver OUT+ → 0 V; GPIO16 → SIG; GND → GND**
 
 **Optional inputs (recommended):**
-- **SRL250 status** (tripped/open = TRUE): 24 V across SRL250 → opto input → **GPIO34**.
-- **Contactor aux feedback** (aux closed = TRUE): 24 V → aux → opto input → **GPIO35**.
+- **SRL250 status** (tripped/open = TRUE): 24 V across SRL250 → opto input → **GPIO18**.
+- **Contactor aux feedback** (aux closed = TRUE): 24 V → aux → opto input → **GPIO19**.
 
 ### Door Sensor
 - Reed: one lead to **GND**, other to **GPIO17** (INPUT_PULLUP). Firmware: immediate OFF + timeout fault.
 
 ### PT100 Sensors (MAX31865, shared SPI)
-- **CLK=GPIO18, MOSI=GPIO23, MISO=GPIO19** (both boards)
-- **CS1=GPIO5** (Ceiling), **CS2=GPIO4** (Bench)
+- **CLK=GPIO14, MOSI=GPIO13, MISO=GPIO12** (both boards)  
+- **CS1=GPIO5** (Ceiling), **CS2=GPIO4** (Bench)  
 - 3.3 V to VCC; 0 V common. Configure **3-wire** jumpers. Shield to **panel ground (one end only)**.
 
 ### RGBW Lighting (24 V PWM via MOSFETs)
@@ -122,14 +122,14 @@ The other big cost is that various DIN rail parts - I chose to use DIN rail comp
 - **3V3** → MAX31865 VCC (both)
 
 **SPI (shared)**
-- **GPIO18** SCK, **GPIO23** MOSI, **GPIO19** MISO  
+- **GPIO14** SCK, **GPIO13** MOSI, **GPIO12** MISO  
 - **GPIO5** CS (MAX31865 #1, Ceiling)  
 - **GPIO4** CS (MAX31865 #2, Bench)
 
 **Inputs**
 - **GPIO17** Door (INPUT_PULLUP)
-- **GPIO34** High-Limit Tripped (via opto) — TRUE = SRL250 open  
-- **GPIO35** Contactor Aux Closed (via opto) — TRUE = aux closed
+- **GPIO18** High-Limit Tripped (via opto) — TRUE = SRL250 open  
+- **GPIO19** Contactor Aux Closed (via opto) — TRUE = aux closed
 
 **Outputs**
 - **GPIO16** Coil MOSFET SIG
@@ -137,8 +137,8 @@ The other big cost is that various DIN rail parts - I chose to use DIN rail comp
 
 **Reserved**
 - **GPIO25/26** reserved for future RS-485
-- **GPIO0/2/12/15** NC (boot straps)
+- **GPIO0/2/15** NC (boot straps)
 - **GPIO1/3** UART (leave free)
-- 34–39 input-only (we use 34/35)
+- 34–39 input-only (unused)
 
 ---
