@@ -83,7 +83,7 @@ switch:
     name: "Heater Contactor Coil"
     restore_mode: ALWAYS_OFF
 
-# Door sensor
+# Door & High Limit Trip Sensors
 binary_sensor:
   - platform: gpio
     pin:
@@ -96,28 +96,27 @@ binary_sensor:
       - delayed_on: 100ms
       - delayed_off: 100ms
 
-# High-limit thermostat status (manual reset)
   - platform: gpio
     pin:
-      number: GPIO18
-      mode: INPUT_PULLUP
-      inverted: true
+      number: GPIO34
+      mode: INPUT
     id: high_limit_trip
     name: "High Limit Trip"
     filters:
       - delayed_on: 100ms
+      - delayed_off: 100ms
 
-# SPI bus for MAX31865s
+
+# SPI bus for MAX31865s Thermostat Boards
 spi:
   id: bus_a
-  clk_pin: GPIO14
-  mosi_pin: GPIO13
-  miso_pin: GPIO12
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+  miso_pin: GPIO19
 
-# Sensors
 sensor:
   - platform: max31865
-    cs_pin: GPIO5
+    cs_pin: GPIO25
     spi_id: bus_a
     rtd_nominal_resistance: 100.0
     reference_resistance: 430.0
@@ -130,7 +129,7 @@ sensor:
       - lambda: return x * 9.0 / 5.0 + 32.0;
 
   - platform: max31865
-    cs_pin: GPIO4
+    cs_pin: GPIO26
     spi_id: bus_a
     rtd_nominal_resistance: 100.0
     reference_resistance: 430.0
@@ -171,19 +170,19 @@ output:
   - platform: ledc
     pin: GPIO21
     id: pwm_r
-    frequency: 19531Hz
+    frequency: 19531 Hz
   - platform: ledc
     pin: GPIO22
     id: pwm_g
-    frequency: 19531Hz
+    frequency: 19531 Hz
   - platform: ledc
     pin: GPIO27
     id: pwm_b
-    frequency: 19531Hz
+    frequency: 19531 Hz
   - platform: ledc
     pin: GPIO33
     id: pwm_w
-    frequency: 19531Hz
+    frequency: 19531 Hz
 
 light:
   - platform: rgbw
