@@ -82,34 +82,33 @@ The other big cost is that various DIN rail parts - I chose to use DIN rail comp
 
 ### Contactor Coil Safety Loop (24 V)
 - **+24 V → DIN fuse (1–2 A) → SRL250 (NC, manual-reset) → contactor coil (+)**  
-- **Contactor coil (−) → MOSFET driver OUT−** (coil channel)  
-- **Driver OUT+ → 0 V; GPIO16 → SIG; GND → GND**
+- **Contactor coil (−) → MOSFET driver OUT− / OUT+ → OPEN** (coil channel)  
+- **Driver VIN 24V; GPIO13 → SIG; GND → GND**
 
 **Optional inputs (recommended):**
-- **SRL250 status** (tripped/open = TRUE): 24 V across SRL250 → opto input → **GPIO18**.
-- **Contactor aux feedback** (aux closed = TRUE): 24 V → aux → opto input → **GPIO19**.
+- **SRL250 status** (tripped/open = TRUE): 24 V across SRL250 → opto input → **GPIOXX**.
+- **Contactor aux feedback** (aux closed = TRUE): 24 V → aux → opto input → **GPIOXX**.
 
 ### Door Sensor
-- Reed: one lead to **GND**, other to **GPIO17** (INPUT_PULLUP). Firmware: immediate OFF + timeout fault.
+- Reed: one lead to **GND**, other to **GPIO21** (INPUT_PULLUP). Firmware: immediate OFF + timeout fault.
 
 ### PT100 Sensors (MAX31865, shared SPI)
-- **CLK=GPIO14, MOSI=GPIO13, MISO=GPIO12** (both boards)  
+- **CLK=GPIO18, MOSI=GPIO17, MISO=GPIO19** (both boards)  
 - **CS1=GPIO5** (Ceiling), **CS2=GPIO4** (Bench)  
-- 3.3 V to VCC; 0 V common. Configure **3-wire** jumpers. Shield to **panel ground (one end only)**.
+- 5V to VIN; 0 V common. Configure **3-wire** jumpers**.
 
 ### RGBW Lighting (24 V PWM via MOSFETs)
 - **+24 V → DIN fuse (LED) ~7.5 A TD → strip V+**
-- **R−/G−/B−/W− → each to its MOSFET driver OUT−**; **all OUT+ → 0 V**
+- **R−/G−/B−/W− → each to its MOSFET driver OUT−**; **all OUT+ → OPEN**
 - **PWM pins**:  
-  - **GPIO21 → Red SIG**  
-  - **GPIO22 → Green SIG**  
-  - **GPIO27 → Blue SIG**  
-  - **GPIO33 → White SIG**
+  - **GPIO32 → Red SIG**  
+  - **GPIO33 → Green SIG**  
+  - **GPIO26 → Blue SIG**  
+  - **GPIO25 → White SIG**
 - 5-core 18 AWG silicone cable through high-temp gland; mount strip **under benches** in **aluminum channel** with screws. Power-inject V+ at both ends if needed.
 
 ### Grounding & EMC
 - Single **0 V star** (ESP32, drivers, MAX31865, DC-DC, PSU).
-- PT100 cable shield to **panel ground** one end only.
 - Label terminals: **24V+**, **0V**, **COIL+**, **COIL−**, **LED_V+**, **LED_R−/G−/B−/W−**, **RTD1**, **RTD2**, **DOOR**, **AUX_FB**, **HLIMIT_FB**.
 
 ---
@@ -122,23 +121,22 @@ The other big cost is that various DIN rail parts - I chose to use DIN rail comp
 - **3V3** → MAX31865 VCC (both)
 
 **SPI (shared)**
-- **GPIO14** SCK, **GPIO13** MOSI, **GPIO12** MISO  
+- **GPIO18** CLK, **GPIO17** MOSI, **GPIO19** MISO  
 - **GPIO5** CS (MAX31865 #1, Ceiling)  
 - **GPIO4** CS (MAX31865 #2, Bench)
 
 **Inputs**
-- **GPIO17** Door (INPUT_PULLUP)
-- **GPIO18** High-Limit Tripped (via opto) — TRUE = SRL250 open  
-- **GPIO19** Contactor Aux Closed (via opto) — TRUE = aux closed
+- **GPIO21** Door (INPUT_PULLUP)
+- **GPIOXX** High-Limit Tripped (via opto) — TRUE = SRL250 open  
+- **GPIOXX** Contactor Aux Closed (via opto) — TRUE = aux closed
 
 **Outputs**
-- **GPIO16** Coil MOSFET SIG
-- **GPIO21/22/27/33** RGBW MOSFET SIG (R/G/B/W)
+- **GPIO13** Coil MOSFET SIG
+- **GPIO32/33/26/25** RGBW MOSFET SIG (R/G/B/W)
 
 **Reserved**
 - **GPIO25/26** reserved for future RS-485
 - **GPIO0/2/15** NC (boot straps)
 - **GPIO1/3** UART (leave free)
-- 34–39 input-only (unused)
-
+  
 ---
