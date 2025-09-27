@@ -13,18 +13,14 @@ esp32:
       CONFIG_ESP_TASK_WDT: "y"
       CONFIG_ESP_TASK_WDT_TIMEOUT_S: "30"
 
-
-# Enable logging with dynamic debug control
 logger:
   level: INFO
   baud_rate: 0
 
-# Enable OTA
 ota:
   platform: esphome
   password: !secret ota_password
 
-# Enable API for Home Assistant
 api:
   encryption:
     key: !secret api_key
@@ -33,12 +29,12 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   ap:
-    ssid: "SaunaController Fallback"
+    ssid: ${friendly_name}_AP
     password: !secret wifi_fallback_pw
 
 captive_portal:
 
-# Global variables
+# ---------------- Globals ----------------
 globals:
   - id: fault_latched
     type: bool
@@ -61,33 +57,11 @@ globals:
     restore_value: no
     initial_value: "0"
 
-# Switches
-switch:
-
-  # Master Enable
-  - platform: template
-    name: "Sauna Master Enable"
-    id: master_enable
-    optimistic: true
-    restore_mode: ALWAYS_OFF
-    turn_on_action:
-      - logger.log: "Master Enabled"
-    turn_off_action:
-      - logger.log: "Master Disabled"
-      - switch.turn_off: coil_relay
-
-  # Coil Relay
-  - platform: gpio
-    pin: GPIO16
-    id: coil_relay
-    name: "Heater Contactor Coil"
-    restore_mode: ALWAYS_OFF
-
-# Door & High Limit Trip Sensors
+# ---------------- Door Sensor ----------------
 binary_sensor:
   - platform: gpio
     pin:
-      number: GPIO17
+      number: GPIO21
       mode: INPUT_PULLUP
       inverted: true
     id: door_sensor
@@ -96,91 +70,62 @@ binary_sensor:
       - delayed_on: 100ms
       - delayed_off: 100ms
 
-  - platform: gpio
-    pin:
-      number: GPIO34
-      mode: INPUT
-    id: high_limit_trip
-    name: "High Limit Trip"
-    filters:
-      - delayed_on: 100ms
-      - delayed_off: 100ms
-
-
-# SPI bus for MAX31865s Thermostat Boards
+# ---------------- SPI (RTD boards) ----------------
 spi:
   id: bus_a
   clk_pin: GPIO18
-  mosi_pin: GPIO23
+  mosi_pin: GPIO17
   miso_pin: GPIO19
 
+# ---------------- Temperature Sensors (°C, 5s updates) ----------------
 sensor:
   - platform: max31865
-    cs_pin: GPIO25
+    cs_pin: GPIO5
     spi_id: bus_a
     rtd_nominal_resistance: 100.0
     reference_resistance: 430.0
     rtd_wires: 3
     name: "Ceiling Temp"
-    id: ceiling_temp_f
-    unit_of_measurement: "°F"
+    id: ceiling_temp_c
+    device_class: temperature
+    state_class: measurement
     accuracy_decimals: 1
-    filters:
-      - lambda: return x * 9.0 / 5.0 + 32.0;
+    update_interval: 5s
 
   - platform: max31865
-    cs_pin: GPIO26
+    cs_pin: GPIO4
     spi_id: bus_a
     rtd_nominal_resistance: 100.0
     reference_resistance: 430.0
     rtd_wires: 3
     name: "Bench Temp"
-    id: bench_temp_f
-    unit_of_measurement: "°F"
+    id: bench_temp_c
+    device_class: temperature
+    state_class: measurement
     accuracy_decimals: 1
-    filters:
-      - lambda: return x * 9.0 / 5.0 + 32.0;
+    update_interval: 5s
 
-# Climate control
-climate:
-  - platform: thermostat
-    name: "Sauna Thermostat"
-    sensor: ceiling_temp_f
-    min_heating_off_time: 120s
-    min_heating_run_time: 120s
-    min_idle_time: 30s
-    heat_deadband: 2°F
-    heat_overrun: 2°F
-    visual:
-      min_temperature: 150°F
-      max_temperature: 200°F
-      temperature_step: 1°F
-    id: sauna_thermostat
-    preset:
-      - name: "Standard"
-        default_target_temperature_low: 180°F
-    default_preset: "Standard"
-    heat_action:
-      - switch.turn_on: coil_relay
-    idle_action:
-      - switch.turn_off: coil_relay
-
-# Lighting
+# ---------------- Contactor Output ----------------
 output:
+  - platform: gpio
+    pin: GPIO13
+    id: coil_output
+
+  # Lighting PWM
   - platform: ledc
-    pin: GPIO21
+    pin: GPIO32
     id: pwm_r
     frequency: 19531 Hz
   - platform: ledc
-    pin: GPIO22
+    pin: GPIO33
     id: pwm_g
     frequency: 19531 Hz
   - platform: ledc
-    pin: GPIO27
+    pin: GPIO26
     id: pwm_b
     frequency: 19531 Hz
   - platform: ledc
-    pin: GPIO33
+    pin: GPIO25
     id: pwm_w
     frequency: 19531 Hz
 
@@ -195,13 +140,55 @@ light:
     restore_mode: ALWAYS_OFF
     default_transition_length: 1s
 
-# Fault clear button
+# ---------------- Climate (thermostat drives contactor) ----------------
+climate:
+  - platform: thermostat
+    name: "Sauna Thermostat"
+    id: sauna_thermostat
+    sensor: ceiling_temp_c
+    min_heating_off_time: 120s
+    min_heating_run_time: 120s
+    min_idle_time: 30s
+    # All Celsius internally (HA will display °F)
+    heat_deadband: 1.1         # ≈ 2°F
+    heat_overrun: 1.1          # ≈ 2°F
+    visual:
+      min_temperature: 65.5    # ≈ 150°F
+      max_temperature: 93.5    # ≈ 200°F
+      temperature_step: 0.5    # ≈ 1°F
+    preset:
+      - name: "Standard"
+        default_target_temperature_low: 82.0  # ≈ 180°F
+    default_preset: "Standard"
+
+    heat_action:
+      - if:
+          condition:
+            lambda: 'return !id(fault_latched);'
+          then:
+            - output.turn_on: coil_output
+            - logger.log: "Heat action -> contactor ON"
+          else:
+            - output.turn_off: coil_output
+            - logger.log: "Heat action blocked (fault latched) -> contactor OFF"
+
+    idle_action:
+      - output.turn_off: coil_output
+      - logger.log: "Idle action -> contactor OFF"
+
+    on_state:
+      - logger.log:
+          format: "Climate state changed - Current: %.1f°C, Target: %.1f°C, Mode: %s"
+          args: ['x.current_temperature', 'x.target_temperature', 'x.mode']
+
+# ---------------- Clear Fault Button ----------------
 button:
   - platform: template
     name: "Clear Fault"
     on_press:
       - lambda: |-
-          if (id(fault_latched) && id(ceiling_temp_f).has_state() && id(ceiling_temp_f).state < 210.0) {
+          // 210°F = 98.9°C
+          if (id(fault_latched) && id(ceiling_temp_c).has_state() && id(ceiling_temp_c).state < 98.9) {
             id(fault_latched) = false;
             id(last_trip_reason) = "";
             ESP_LOGI("main", "Fault cleared.");
@@ -209,43 +196,36 @@ button:
             ESP_LOGW("main", "Cannot clear fault: still in overtemp or sensor invalid.");
           }
 
-# Main control loop
+# ---------------- Safety & Control Guardrail ----------------
 interval:
   - interval: 1s
     then:
       - lambda: |-
-          // Safety: hardware high-limit
-          if (id(high_limit_trip).state) {
-            id(fault_latched) = true;
-            id(last_trip_reason) = "Hardware high limit";
-            id(coil_relay).turn_off();
-          }
-
-          // Safety: door timeout
-          if (id(door_sensor).state && id(master_enable).state) {
+          // Door timeout only when heating mode is enabled
+          if (id(door_sensor).state && id(sauna_thermostat).mode == climate::CLIMATE_MODE_HEAT) {
             if (id(door_open_since) == 0) id(door_open_since) = millis();
             else if (millis() - id(door_open_since) > 60000) { // 60s
               id(fault_latched) = true;
               id(last_trip_reason) = "Door open too long";
-              id(coil_relay).turn_off();
+              id(door_open_since) = 0;
+              id(coil_output).turn_off();
+              ESP_LOGW("main", "Door open timeout fault!");
             }
           } else {
             id(door_open_since) = 0;
           }
 
-          // Control
-          if (!id(fault_latched) && id(master_enable).state) {
-            if (id(sauna_thermostat).mode == climate::CLIMATE_MODE_HEAT) {
-              if (id(ceiling_temp_f).state < id(sauna_thermostat).target_temperature - 1) {
-                id(coil_relay).turn_on();
-              } else if (id(ceiling_temp_f).state >= id(sauna_thermostat).target_temperature + 1) {
-                id(coil_relay).turn_off();
-              }
-            } else {
-              id(coil_relay).turn_off();
-            }
-          } else {
-            id(coil_relay).turn_off();
+          // Software high temp safety (210°F = 98.9°C)
+          if (id(ceiling_temp_c).has_state() && id(ceiling_temp_c).state > 98.9) {
+            id(fault_latched) = true;
+            id(last_trip_reason) = "Software high temperature limit";
+            id(coil_output).turn_off();
+            ESP_LOGW("main", "Software high temperature fault at %.1f°C!", id(ceiling_temp_c).state);
+          }
+
+          // Absolute guard
+          if (id(fault_latched) || id(sauna_thermostat).mode != climate::CLIMATE_MODE_HEAT) {
+            id(coil_output).turn_off();
           }
 
 text_sensor:
@@ -253,4 +233,4 @@ text_sensor:
     name: "Last Trip Reason"
     id: last_trip_reason_text
     lambda: |-
-      return id(last_trip_reason).c_str();
+      return id(last_trip_reason);
