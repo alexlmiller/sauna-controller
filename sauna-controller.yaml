@@ -32,6 +32,9 @@ wifi:
     ssid: ${friendly_name}_AP
     password: !secret wifi_fallback_pw
 
+web_server:
+  port: 80
+  
 captive_portal:
 
 # ---------------- Globals ----------------
@@ -90,7 +93,7 @@ sensor:
     device_class: temperature
     state_class: measurement
     accuracy_decimals: 1
-    update_interval: 5s
+    update_interval: 30s
 
   - platform: max31865
     cs_pin: GPIO4
@@ -146,8 +149,8 @@ climate:
     name: "Sauna Thermostat"
     id: sauna_thermostat
     sensor: ceiling_temp_c
-    min_heating_off_time: 120s
-    min_heating_run_time: 120s
+    min_heating_off_time: 300s
+    min_heating_run_time: 360s
     min_idle_time: 30s
     # All Celsius internally (HA will display °F)
     heat_deadband: 1.1         # ≈ 2°F
@@ -158,7 +161,7 @@ climate:
       temperature_step: 0.5    # ≈ 1°F
     preset:
       - name: "Standard"
-        default_target_temperature_low: 82.0  # ≈ 180°F
+        default_target_temperature_low: 82.0 # ≈ 180°F
     default_preset: "Standard"
 
     heat_action:
