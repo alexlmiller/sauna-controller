@@ -59,6 +59,11 @@ globals:
     type: uint32_t
     restore_value: no
     initial_value: "0"
+  # New global to store last valid bench temperature
+  - id: last_valid_bench_temp
+    type: float
+    restore_value: yes
+    initial_value: "21.0"  # Room temperature default (70°F)
 
 # ---------------- Door Sensor ----------------
 binary_sensor:
@@ -73,40 +78,34 @@ binary_sensor:
       - delayed_on: 100ms
       - delayed_off: 100ms
 
-# ---------------- SPI (RTD boards) ----------------
-spi:
-  id: bus_a
-  clk_pin: GPIO18
-  mosi_pin: GPIO17
-  miso_pin: GPIO19
+# Bus 1 for short sensor - GPIO5 with its resistor
+one_wire:
+  - platform: gpio
+    pin: GPIO15
+    id: bus1
+
+# Bus 2 for extended sensor - GPIO4 with its resistor  
+  - platform: gpio
+    pin: GPIO16
+    id: bus2
 
 # ---------------- Temperature Sensors (°C, 5s updates) ----------------
 sensor:
-  - platform: max31865
-    cs_pin: GPIO5
-    spi_id: bus_a
-    rtd_nominal_resistance: 100.0
-    reference_resistance: 430.0
-    rtd_wires: 3
-    name: "Ceiling Temp"
-    id: ceiling_temp_c
-    device_class: temperature
-    state_class: measurement
-    accuracy_decimals: 1
-    update_interval: 30s
 
-  - platform: max31865
-    cs_pin: GPIO4
-    spi_id: bus_a
-    rtd_nominal_resistance: 100.0
-    reference_resistance: 430.0
-    rtd_wires: 3
+  - platform: dallas_temp
+    one_wire_id: bus1
     name: "Bench Temp"
     id: bench_temp_c
-    device_class: temperature
-    state_class: measurement
-    accuracy_decimals: 1
+    resolution: 10
     update_interval: 5s
+
+  - platform: dallas_temp
+    one_wire_id: bus2
+    name: "Ceiling Temp"
+    id: ceiling_temp_c
+    resolution: 10
+    update_interval: 5s
+
 
 # ---------------- Contactor Output ----------------
 output:
@@ -149,8 +148,8 @@ climate:
     name: "Sauna Thermostat"
     id: sauna_thermostat
     sensor: ceiling_temp_c
-    min_heating_off_time: 300s
-    min_heating_run_time: 360s
+    min_heating_off_time: 240s
+    min_heating_run_time: 240s
     min_idle_time: 30s
     # All Celsius internally (HA will display °F)
     heat_deadband: 1.1         # ≈ 2°F
