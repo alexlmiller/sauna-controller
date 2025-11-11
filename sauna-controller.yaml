@@ -37,7 +37,7 @@ web_server:
   
 captive_portal:
 
-# ---------------- Globals ----------------
+############### GLOBALS ###############
 globals:
   - id: fault_latched
     type: bool
@@ -59,14 +59,12 @@ globals:
     type: uint32_t
     restore_value: no
     initial_value: "0"
-  # New global to store last valid bench temperature
-  - id: last_valid_bench_temp
-    type: float
-    restore_value: yes
-    initial_value: "21.0"  # Room temperature default (70°F)
 
-# ---------------- Door Sensor ----------------
+################### INPUTS ###################
+
 binary_sensor:
+
+# ----- Door Sensor -----
   - platform: gpio
     pin:
       number: GPIO21
@@ -78,27 +76,29 @@ binary_sensor:
       - delayed_on: 100ms
       - delayed_off: 100ms
 
-# Bus 1 for short sensor - GPIO5 with its resistor
-one_wire:
-  - platform: gpio
-    pin: GPIO15
-    id: bus1
+################### TEMP SENSORS ###################
 
-# Bus 2 for extended sensor - GPIO4 with its resistor  
+# ----- Inputs -----
+one_wire:
+# Bus 1 Input for Bench Temp Sensor
   - platform: gpio
-    pin: GPIO16
+    pin: GPIO26
+    id: bus1
+# Bus 2 Input for Ceiling Temp Sensor 
+  - platform: gpio
+    pin: GPIO27
     id: bus2
 
-# ---------------- Temperature Sensors (°C, 5s updates) ----------------
+# ----- Sensors -----
 sensor:
-
+# Bench Temp
   - platform: dallas_temp
     one_wire_id: bus1
     name: "Bench Temp"
     id: bench_temp_c
     resolution: 10
     update_interval: 5s
-
+# Ceiling Temp
   - platform: dallas_temp
     one_wire_id: bus2
     name: "Ceiling Temp"
@@ -107,29 +107,35 @@ sensor:
     update_interval: 5s
 
 
-# ---------------- Contactor Output ----------------
+################### OUTPUTS ###################
+
 output:
+
+# ---------------- Contactor ----------------
+
   - platform: gpio
     pin: GPIO13
     id: coil_output
 
-  # Lighting PWM
+# ---------------- LED MOSFETS ----------------
   - platform: ledc
-    pin: GPIO32
+    pin: GPIO16
     id: pwm_r
     frequency: 19531 Hz
   - platform: ledc
-    pin: GPIO33
+    pin: GPIO17
     id: pwm_g
     frequency: 19531 Hz
   - platform: ledc
-    pin: GPIO26
+    pin: GPIO18
     id: pwm_b
     frequency: 19531 Hz
   - platform: ledc
-    pin: GPIO25
+    pin: GPIO19
     id: pwm_w
     frequency: 19531 Hz
+
+################### LED LIGHTS ###################
 
 light:
   - platform: rgbw
@@ -142,7 +148,7 @@ light:
     restore_mode: ALWAYS_OFF
     default_transition_length: 1s
 
-# ---------------- Climate (thermostat drives contactor) ----------------
+################### CLIMATE ###################
 climate:
   - platform: thermostat
     name: "Sauna Thermostat"
@@ -182,6 +188,9 @@ climate:
       - logger.log:
           format: "Climate state changed - Current: %.1f°C, Target: %.1f°C, Mode: %s"
           args: ['x.current_temperature', 'x.target_temperature', 'x.mode']
+
+
+################### SAFETIES ###################
 
 # ---------------- Clear Fault Button ----------------
 button:
