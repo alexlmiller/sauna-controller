@@ -39,26 +39,54 @@ captive_portal:
 
 ############### GLOBALS ###############
 globals:
-  - id: fault_latched
+  - id: fault_latched # Is The Sauna in Fault
     type: bool
     restore_value: no
     initial_value: "false"
-  - id: last_trip_reason
+  - id: last_trip_reason # Last Trip Reason
     type: std::string
     restore_value: no
     initial_value: ""
-  - id: session_start_ms
+  - id: session_start_ms # Sauna Start Time
     type: uint32_t
     restore_value: no
     initial_value: "0"
-  - id: session_active
+  - id: session_active # Is Sauna in Use
     type: bool
     restore_value: no
     initial_value: "false"
-  - id: door_open_since
+  - id: door_open_since # Door Open Time
     type: uint32_t
     restore_value: no
     initial_value: "0"
+  - id: welded_detect_since # Welded Contactor Trip Time
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+  - id: coil_is_on # Track actual coil state for welded detection
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+number:
+  - platform: template   # Door-open timeout before tripping (seconds)
+    name: "Door Open Fault Seconds"
+    id: door_open_fault_s
+    min_value: 15
+    max_value: 300
+    step: 5
+    optimistic: true
+    restore_value: true
+    initial_value: 45
+  - platform: template  # Software high-temp trip (°F)
+    name: "Software High Temp °F"
+    id: soft_high_temp_f
+    min_value: 190
+    max_value: 230
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 210
 
 ################### INPUTS ###################
 
@@ -66,15 +94,60 @@ binary_sensor:
 
 # ----- Door Sensor -----
   - platform: gpio
-    pin:
-      number: GPIO21
-      mode: INPUT_PULLUP
-      inverted: true
     id: door_sensor
     name: "Sauna Door"
+    device_class: door
+    pin:
+      number: GPIO21
+      mode:
+        input: true
+        pullup: true
     filters:
+      - lambda: return x;      # ON when door is open
       - delayed_on: 100ms
       - delayed_off: 100ms
+
+# ----- Contactor Status (Aux Relay) -----  
+  - platform: gpio
+    id: contactor_aux_closed
+    name: "Contactor Aux Closed"
+    pin:
+      number: GPIO32
+      mode:
+        input: true
+        pullup: true
+    filters:
+      - lambda: return !x;      # TRUE when aux closed (opto pulls low)
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+
+# ----- High Limit Trip -----  
+  - platform: gpio
+    id: high_limit_trip
+    name: "High Limit Trip"
+    pin:
+      number: GPIO33
+      mode:
+        input: true
+        pullup: true
+    filters:
+      - lambda: return x;      # FALSE when tripped (opto pulls high)
+      - delayed_on: 100ms
+      - delayed_off: 100ms
+
+# # ----- Future Opto Monitoring -----  
+#   - platform: gpio
+#     id: future_monitoring
+#     name: "Future Monitoring"
+#     pin:
+#       number: GPIO25
+#       mode:
+#         input: true
+#         pullup: true
+#     filters:
+#       - lambda: return !x;      # TRUE when tripped (opto pulls low)
+#       - delayed_on: 100ms
+#       - delayed_off: 100ms
 
 ################### TEMP SENSORS ###################
 
@@ -175,13 +248,16 @@ climate:
             lambda: 'return !id(fault_latched);'
           then:
             - output.turn_on: coil_output
+            - lambda: 'id(coil_is_on) = true;'
             - logger.log: "Heat action -> contactor ON"
           else:
             - output.turn_off: coil_output
+            - lambda: 'id(coil_is_on) = false;'
             - logger.log: "Heat action blocked (fault latched) -> contactor OFF"
 
     idle_action:
       - output.turn_off: coil_output
+      - lambda: 'id(coil_is_on) = false;'
       - logger.log: "Idle action -> contactor OFF"
 
     on_state:
@@ -198,46 +274,103 @@ button:
     name: "Clear Fault"
     on_press:
       - lambda: |-
-          // 210°F = 98.9°C
-          if (id(fault_latched) && id(ceiling_temp_c).has_state() && id(ceiling_temp_c).state < 98.9) {
+          // Convert configurable limit from °F to °C
+          float soft_limit_c = (id(soft_high_temp_f).state - 32.0) * 5.0 / 9.0;
+          
+          if (id(fault_latched) && id(ceiling_temp_c).has_state() && id(ceiling_temp_c).state < soft_limit_c) {
             id(fault_latched) = false;
             id(last_trip_reason) = "";
-            ESP_LOGI("main", "Fault cleared.");
+            ESP_LOGI("safety", "Fault cleared by user.");
+          } else if (!id(ceiling_temp_c).has_state()) {
+            ESP_LOGW("safety", "Cannot clear fault: ceiling sensor invalid.");
           } else {
-            ESP_LOGW("main", "Cannot clear fault: still in overtemp or sensor invalid.");
+            ESP_LOGW("safety", "Cannot clear fault: temperature still above limit (%.1f°C / %.1f°F)", 
+                     id(ceiling_temp_c).state, id(ceiling_temp_c).state * 9.0 / 5.0 + 32.0);
           }
 
-# ---------------- Safety & Control Guardrail ----------------
+# ---------------- Safety Monitoring Loop ----------------
 interval:
   - interval: 1s
     then:
       - lambda: |-
-          // Door timeout only when heating mode is enabled
+          // ============================================
+          // 1. DOOR OPEN TIMEOUT FAULT
+          // ============================================
+          // Only monitor door when heating mode is enabled
           if (id(door_sensor).state && id(sauna_thermostat).mode == climate::CLIMATE_MODE_HEAT) {
-            if (id(door_open_since) == 0) id(door_open_since) = millis();
-            else if (millis() - id(door_open_since) > 60000) { // 60s
-              id(fault_latched) = true;
-              id(last_trip_reason) = "Door open too long";
-              id(door_open_since) = 0;
-              id(coil_output).turn_off();
-              ESP_LOGW("main", "Door open timeout fault!");
+            if (id(door_open_since) == 0) {
+              id(door_open_since) = millis();
+              ESP_LOGD("safety", "Door opened while heating - starting timeout timer");
+            } else {
+              uint32_t door_open_ms = millis() - id(door_open_since);
+              uint32_t fault_ms = (uint32_t)(id(door_open_fault_s).state * 1000);
+              
+              if (door_open_ms > fault_ms) {
+                id(fault_latched) = true;
+                id(last_trip_reason) = "Door open timeout (" + 
+                                        to_string((int)id(door_open_fault_s).state) + "s exceeded)";
+                id(door_open_since) = 0;
+                id(coil_output).turn_off();
+                ESP_LOGW("safety", "FAULT: Door open timeout after %.0fs!", id(door_open_fault_s).state);
+              }
             }
           } else {
-            id(door_open_since) = 0;
+            if (id(door_open_since) != 0) {
+              ESP_LOGD("safety", "Door closed or heating disabled - resetting timeout timer");
+            }
+            id(door_open_since) = 0;  // Reset timer when door closes or heating disabled
           }
 
-          // Software high temp safety (210°F = 98.9°C)
-          if (id(ceiling_temp_c).has_state() && id(ceiling_temp_c).state > 98.9) {
-            id(fault_latched) = true;
-            id(last_trip_reason) = "Software high temperature limit";
-            id(coil_output).turn_off();
-            ESP_LOGW("main", "Software high temperature fault at %.1f°C!", id(ceiling_temp_c).state);
+          // ============================================
+          // 2. SOFTWARE HIGH TEMPERATURE FAULT
+          // ============================================
+          if (id(ceiling_temp_c).has_state()) {
+            float temp_f = id(ceiling_temp_c).state * 9.0 / 5.0 + 32.0;
+            if (temp_f > id(soft_high_temp_f).state) {
+              id(fault_latched) = true;
+              id(last_trip_reason) = "Software high temperature (" + 
+                                      to_string((int)temp_f) + "°F > " + 
+                                      to_string((int)id(soft_high_temp_f).state) + "°F)";
+              id(coil_output).turn_off();
+              ESP_LOGW("safety", "FAULT: Software high temperature at %.1f°F (limit: %.0f°F)", 
+                       temp_f, id(soft_high_temp_f).state);
+            }
           }
 
-          // Absolute guard
+          // ============================================
+          // 3. WELDED CONTACTOR DETECTION
+          // ============================================
+          // Check if contactor aux shows closed when coil should be OFF
+          bool coil_commanded_on = id(coil_is_on);
+          bool aux_reports_closed = id(contactor_aux_closed).state;
+          
+          if (!coil_commanded_on && aux_reports_closed) {
+            // Contactor appears welded (aux closed when coil is OFF)
+            if (id(welded_detect_since) == 0) {
+              id(welded_detect_since) = millis();
+              ESP_LOGW("safety", "Possible welded contactor detected (coil OFF but aux closed)");
+            } else if (millis() - id(welded_detect_since) > 3000) {  // 3 second confirmation
+              id(fault_latched) = true;
+              id(last_trip_reason) = "Welded contactor detected (aux closed when coil OFF)";
+              id(coil_output).turn_off();
+              id(coil_is_on) = false;
+              id(welded_detect_since) = 0;
+              ESP_LOGE("safety", "FAULT: Welded contactor confirmed after 3s!");
+            }
+          } else {
+            id(welded_detect_since) = 0;  // Reset detection timer
+          }
+
+          // ============================================
+          // 4. ABSOLUTE SAFETY GUARD
+          // ============================================
+          // ALWAYS turn off coil if fault latched or heating mode disabled
           if (id(fault_latched) || id(sauna_thermostat).mode != climate::CLIMATE_MODE_HEAT) {
             id(coil_output).turn_off();
+            id(coil_is_on) = false;
           }
+
+################### FAULT REPORTING ###################
 
 text_sensor:
   - platform: template
