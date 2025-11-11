@@ -3,7 +3,7 @@ No more dealing with cloud services or crappy proprietary apps for your home sau
 
 The design offers robust controls of both the heater and lights, along with safeties similar to a commercial unit, including: 
 - Contol of a heater via a **24 VDC coil contactor**
-- Dual highly accuracy **PT100** temp sensors (primary high on the wall + one closer to the sitting bench)
+- Dual highly accuracy temp sensors (primary high on the wall + one closer to the sitting bench)
 - **RGBW under-bench lighting** (24 V, PWM via MOSFETs)
 
 Safeties include
