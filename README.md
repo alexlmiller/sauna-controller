@@ -39,7 +39,7 @@ The other big cost is that various DIN rail parts - I chose to use DIN rail comp
 - **Software**:
   - Software high-temp limit (default **210 °F**)
   - ΔT stratification fault (ceiling vs bench)
-  - Door open **instant-off** + **timeout** fault
+  - Door open **timeout** fault
   - Session auto-off
   - Sensor NaN faults + **bench fallback** (optional, with offset)
   - **WDT** (30 s): any hang → reboot → coil defaults **OFF**
@@ -57,7 +57,7 @@ The other big cost is that various DIN rail parts - I chose to use DIN rail comp
 - **Auxiliary contact block** compatible with DPE65BD (1× NO or 1NO/1NC)
 - **24 V DIN PSU 150 W** — Mean Well **HDR-150-24** (1×)
 - **24→5 V DIN DC-DC** — Mean Well **DDR-15G-5** (1×)
-- **MAX31865 PT100** boards (2×) + **PT100 3-wire probes** (2×)
+- **DB18B20** probes (2×)
 - **MOSFET driver boards** — Adafruit PID **5648** (5× total: 1× coil, 4× RGBW)
 - **LEDYi 24 V RGBW sauna strip** ~5 m (1×), aluminum channel + frosted lens (~5 m)
 - **Manual-reset high-limit** — SUPCO **SRL250** (~250 °F, NC) (1×)
@@ -65,8 +65,8 @@ The other big cost is that various DIN rail parts - I chose to use DIN rail comp
   - **1–2 A** (coil branch)
   - **7.5 A time-delay** (LED branch; size per LED power)
 - Phoenix Contact DIN terminals (HV/LV), ground terminal, jumper bars
-- **5-core high-temp silicone cable** (18 AWG) for LED, shielded twisted pair for PT100
-- **High-temp cable glands** for LED/PT100/door
+- **5-core high-temp silicone cable** (18 AWG) for LED, shielded twisted pair for DS18B20s
+- **High-temp cable glands** for wires
 - **Enclosure** (recommended): **500×400×200 mm** polycarbonate with backplate
 
 ---
@@ -92,23 +92,23 @@ The other big cost is that various DIN rail parts - I chose to use DIN rail comp
 ### Door Sensor
 - Reed: one lead to **GND**, other to **GPIO21** (INPUT_PULLUP). Firmware: immediate OFF + timeout fault.
 
-### PT100 Sensors (MAX31865, shared SPI)
-- **CLK=GPIO18, MOSI=GPIO17, MISO=GPIO19** (both boards)  
-- **CS1=GPIO5** (Ceiling), **CS2=GPIO4** (Bench)  
-- 5V to VIN; 0 V common. Configure **3-wire** jumpers**.
+### DS18B20 Sensors (One-Wire but Independent Busses)
+- **BUS1=GPIO26** (Bench)  
+- **BUS2=GPIO27** (Ceiling) 
+- 3.3V to VIN; 0 V common
 
 ### RGBW Lighting (24 V PWM via MOSFETs)
 - **+24 V → DIN fuse (LED) ~7.5 A TD → strip V+**
 - **R−/G−/B−/W− → each to its MOSFET driver OUT−**; **all OUT+ → OPEN**
 - **PWM pins**:  
-  - **GPIO32 → Red SIG**  
-  - **GPIO33 → Green SIG**  
-  - **GPIO26 → Blue SIG**  
-  - **GPIO25 → White SIG**
+  - **GPIO16 → Red SIG**  
+  - **GPIO17 → Green SIG**  
+  - **GPIO18 → Blue SIG**  
+  - **GPIO19 → White SIG**
 - 5-core 18 AWG silicone cable through high-temp gland; mount strip **under benches** in **aluminum channel** with screws. Power-inject V+ at both ends if needed.
 
 ### Grounding & EMC
-- Single **0 V star** (ESP32, drivers, MAX31865, DC-DC, PSU).
+- Single **0 V star** (ESP32, drivers, DC-DC, PSU, etc).
 - Label terminals: **24V+**, **0V**, **COIL+**, **COIL−**, **LED_V+**, **LED_R−/G−/B−/W−**, **RTD1**, **RTD2**, **DOOR**, **AUX_FB**, **HLIMIT_FB**.
 
 ---
@@ -118,25 +118,24 @@ The other big cost is that various DIN rail parts - I chose to use DIN rail comp
 **Power**
 - **VIN (5 V)** ← DDR-15G-5
 - **GND** ← 0 V common
-- **3V3** → MAX31865 VCC (both)
+- **3V3** → DS18B20 VCC (both)
 
-**SPI (shared)**
-- **GPIO18** CLK, **GPIO17** MOSI, **GPIO19** MISO  
-- **GPIO5** CS (MAX31865 #1, Ceiling)  
-- **GPIO4** CS (MAX31865 #2, Bench)
+**DS18B20 Temp Sensors**
+- **GPIO26** Bench
+- **GPIO27** Ceiling 
 
 **Inputs**
-- **GPIO21** Door (INPUT_PULLUP)
+- **GPIOXX** Door (INPUT_PULLUP)
 - **GPIOXX** High-Limit Tripped (via opto) — TRUE = SRL250 open  
 - **GPIOXX** Contactor Aux Closed (via opto) — TRUE = aux closed
 
 **Outputs**
 - **GPIO13** Coil MOSFET SIG
-- **GPIO32/33/26/25** RGBW MOSFET SIG (R/G/B/W)
+- **GPIO16/17/18/19** RGBW MOSFET SIG (R/G/B/W)
 
 **Reserved**
 - **GPIO25/26** reserved for future RS-485
-- **GPIO0/2/15** NC (boot straps)
+- **GPIO0/2/12/15** NC (boot straps)
 - **GPIO1/3** UART (leave free)
   
 ---
