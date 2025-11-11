@@ -16,6 +16,7 @@ While the ESP handles the actual control of the sauna, currently all input is do
 > ⚠️ **Electrical safety**: This project switches lethal voltages. Get a licensed electrician/PE to review & install. Use appropriately rated components and follow local code.
 
 ---
+![Controller Box](https://github.com/user-attachments/assets/d93286e9-3aa9-4a17-b4d4-1751c39da36b)
 
 ## Hardware Design Overview
 The total cost for the hardware should be a bit <$500 + whatever lighting you choose to use
@@ -125,9 +126,9 @@ The other big cost is that various DIN rail parts - I chose to use DIN rail comp
 - **GPIO27** Ceiling 
 
 **Inputs**
-- **GPIOXX** Door (INPUT_PULLUP)
-- **GPIOXX** High-Limit Tripped (via opto) — TRUE = SRL250 open  
-- **GPIOXX** Contactor Aux Closed (via opto) — TRUE = aux closed
+- **GPIO21** Door (INPUT_PULLUP)
+- **GPIO32** Contactor Aux Closed (via opto) — TRUE = aux closed
+- **GPIO33** High-Limit Tripped (via opto) — TRUE = SRL250 open  
 
 **Outputs**
 - **GPIO13** Coil MOSFET SIG
@@ -139,3 +140,13 @@ The other big cost is that various DIN rail parts - I chose to use DIN rail comp
 - **GPIO1/3** UART (leave free)
   
 ---
+
+## Software & UI
+The actual control software runs entirely on the ESP32, the UI is via Home Assistant - in the future I'm likely to build a physical controller for it as well
+
+### HA Device Page
+<img width="723" height="761" alt="Home Assistant" src="https://github.com/user-attachments/assets/819bb462-3065-4353-bc77-227a327b023d" />
+
+
+### Phone Dashboard
+<img width="606" height="767" alt="Dashboared" src="https://github.com/user-attachments/assets/f103d0ee-843a-4577-ad8f-8157f9dca8a7" />
