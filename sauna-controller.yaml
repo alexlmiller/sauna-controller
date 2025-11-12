@@ -98,14 +98,19 @@ binary_sensor:
     name: "Sauna Door"
     device_class: door
     pin:
-      number: GPIO21
+      number: GPIO22  # Changed from GPIO21 - GPIO21 not responding
       mode:
         input: true
         pullup: true
+      inverted: false    # NO reed switch: closed pulls LOW, open pulls HIGH
     filters:
-      - lambda: return x;      # ON when door is open
       - delayed_on: 100ms
       - delayed_off: 100ms
+    on_state:
+      then:
+        - logger.log:
+            format: "Door sensor changed to: %s"
+            args: ['x ? "OPEN" : "CLOSED"']
 
 # ----- Contactor Status (Aux Relay) -----  
   - platform: gpio
