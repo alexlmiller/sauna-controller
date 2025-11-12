@@ -91,7 +91,7 @@ The other big cost is that various DIN rail parts - I chose to use DIN rail comp
 - **Contactor aux feedback** (aux closed = TRUE): 24 V → aux → opto input → **GPIOXX**.
 
 ### Door Sensor
-- Reed: one lead to **GND**, other to **GPIO21** (INPUT_PULLUP). Firmware: immediate OFF + timeout fault.
+- Reed: one lead to **GND**, other to **GPIO22** (INPUT_PULLUP). Firmware: immediate OFF + timeout fault.
 
 ### DS18B20 Sensors (One-Wire but Independent Busses)
 - **BUS1=GPIO26** (Bench)  
@@ -126,7 +126,7 @@ The other big cost is that various DIN rail parts - I chose to use DIN rail comp
 - **GPIO27** Ceiling 
 
 **Inputs**
-- **GPIO21** Door (INPUT_PULLUP)
+- **GPIO22** Door (INPUT_PULLUP)
 - **GPIO32** Contactor Aux Closed (via opto) — TRUE = aux closed
 - **GPIO33** High-Limit Tripped (via opto) — TRUE = SRL250 open  
 
