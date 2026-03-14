@@ -1,0 +1,1070 @@
+###############################################################################
+# Sauna Panel — CrowPanel 2.1" Rotary Display
+# Wall-mounted HMI for sauna controller. All control over wired UART/RS-485.
+# WiFi enabled for OTA updates only — no HA API, no cloud.
+###############################################################################
+
+esphome:
+  name: sauna-panel
+  friendly_name: Sauna Panel
+  platformio_options:
+    build_flags: "-DBOARD_HAS_PSRAM"
+    board_build.esp-idf.memory_type: qio_opi
+    board_build.flash_mode: dio
+  on_boot:
+    priority: 800
+    then:
+      # CrowPanel PCF8574 boot sequence — mandatory
+      - output.turn_on: lcd_power
+      - output.turn_on: display_reset
+      - delay: 100ms
+      - output.turn_off: display_reset
+      - delay: 100ms
+      - output.turn_on: tp_reset
+      - delay: 100ms
+      - output.turn_off: tp_reset
+      - delay: 120ms
+      - output.turn_on: tp_reset
+      - delay: 120ms
+      - output.turn_on: tp_intr
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: "y"
+      CONFIG_SPIRAM_RODATA: "y"
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO
+  baud_rate: 0  # Free GPIO43/44 for RS-485
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+ota:
+  platform: esphome
+  password: !secret ota_password
+
+# No api: block — panel does NOT connect to Home Assistant
+
+############### GLOBALS ###############
+globals:
+  # Sync state
+  - id: synced
+    type: bool
+    initial_value: "false"
+
+  # Local mirrors — NaN = not yet synced
+  - id: local_target_temp
+    type: float
+    initial_value: "NAN"
+  - id: local_heat_mode
+    type: float
+    initial_value: "NAN"
+  - id: local_brightness
+    type: float
+    initial_value: "NAN"
+  - id: local_light_r
+    type: float
+    initial_value: "NAN"
+  - id: local_light_g
+    type: float
+    initial_value: "NAN"
+  - id: local_light_b
+    type: float
+    initial_value: "NAN"
+  - id: local_light_w
+    type: float
+    initial_value: "NAN"
+
+  # Dirty flags — true after user interaction
+  - id: target_temp_dirty
+    type: bool
+    initial_value: "false"
+  - id: heat_mode_dirty
+    type: bool
+    initial_value: "false"
+  - id: brightness_dirty
+    type: bool
+    initial_value: "false"
+  - id: light_color_dirty
+    type: bool
+    initial_value: "false"
+
+  # One-shot action counters
+  - id: clear_fault_ctr
+    type: int
+    initial_value: "0"
+  - id: light_toggle_ctr
+    type: int
+    initial_value: "0"
+
+  # Active preset (-1 = custom/unknown)
+  - id: active_preset
+    type: int
+    initial_value: "-1"
+
+  # Link state
+  - id: last_rx_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: link_up
+    type: bool
+    initial_value: "false"
+
+  # Active page tracker (0=main, 1=light, 2=info)
+  - id: lv_active_page
+    type: int
+    initial_value: "0"
+
+  # Status ring color (for cross-lambda access)
+  - id: status_ring_color
+    type: uint32_t
+    initial_value: "0x3366FF"
+
+############### CROWPANEL HARDWARE ###############
+
+i2c:
+  sda: GPIO38
+  scl: GPIO39
+  id: bus_a
+
+pcf8574:
+  - id: pcf
+    address: 0x21
+
+output:
+  - platform: ledc
+    pin: 6
+    id: bl_pwm
+    frequency: 19531Hz
+  - platform: gpio
+    id: lcd_power
+    pin:
+      pcf8574: pcf
+      number: 3
+      mode: { output: true }
+      inverted: false
+  - platform: gpio
+    id: display_reset
+    pin:
+      pcf8574: pcf
+      number: 4
+      mode: { output: true }
+      inverted: true
+  - platform: gpio
+    id: tp_reset
+    pin:
+      pcf8574: pcf
+      number: 0
+      mode: { output: true }
+  - platform: gpio
+    id: tp_intr
+    pin:
+      pcf8574: pcf
+      number: 2
+      mode: { output: true }
+
+light:
+  - platform: monochromatic
+    name: "LCD Backlight"
+    output: bl_pwm
+    id: display_backlight
+    default_transition_length: 0s
+    restore_mode: ALWAYS_ON
+
+spi:
+  clk_pin: 2
+  mosi_pin: 1
+
+external_components:
+  - source: github://sEbola76/Makerfabs
+    components: [cst826]
+
+touchscreen:
+  platform: cst826
+  id: panel_touch
+  i2c_id: bus_a
+  skip_probe: true
+  update_interval: 25ms
+  address: 0x15
+
+display:
+  - platform: st7701s
+    id: panel_display
+    update_interval: never
+    spi_mode: MODE3
+    color_order: RGB
+    invert_colors: false
+    dimensions:
+      width: 480
+      height: 480
+    cs_pin: 16
+    de_pin: 40
+    hsync_pin: 15
+    vsync_pin: 7
+    pclk_pin: 41
+    data_pins:
+      red: [46, 3, 8, 18, 17]
+      green: [14, 13, 12, 11, 10, 9]
+      blue: [5, 45, 48, 47, 21]
+    hsync_front_porch: 20
+    hsync_pulse_width: 10
+    hsync_back_porch: 10
+    vsync_front_porch: 8
+    vsync_pulse_width: 10
+    vsync_back_porch: 10
+    pclk_frequency: 18MHz
+    pclk_inverted: true
+    init_sequence:
+      - [0x01]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x10]
+      - [0xCC, 0x10]
+      - [0xCD, 0x08]
+      - [0xB0, 0x02, 0x13, 0x1B, 0x0D, 0x10, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+      - [0xB1, 0x05, 0x13, 0x1B, 0x0D, 0x11, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x11]
+      - [0xB0, 0x5D]
+      - [0xB1, 0x43]
+      - [0xB2, 0x81]
+      - [0xB3, 0x80]
+      - [0xB5, 0x43]
+      - [0xB7, 0x85]
+      - [0xB8, 0x20]
+      - [0xC1, 0x78]
+      - [0xC2, 0x78]
+      - [0xD0, 0x88]
+      - [0xE0, 0x00, 0x00, 0x02]
+      - [0xE1, 0x03, 0xA0, 0x00, 0x00, 0x04, 0xA0, 0x00, 0x00, 0x00, 0x20, 0x20]
+      - [0xE2, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xE3, 0x00, 0x00, 0x11, 0x00]
+      - [0xE4, 0x22, 0x00]
+      - [0xE5, 0x05, 0xEC, 0xA0, 0xA0, 0x07, 0xEE, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xE6, 0x00, 0x00, 0x11, 0x00]
+      - [0xE7, 0x22, 0x00]
+      - [0xE8, 0x06, 0xED, 0xA0, 0xA0, 0x08, 0xEF, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xEB, 0x00, 0x00, 0x40, 0x40, 0x00, 0x00, 0x00]
+      - [0xED, 0xFF, 0xFF, 0xFF, 0xBA, 0x0A, 0xBF, 0x45, 0xFF, 0xFF, 0x54, 0xFB, 0xA0, 0xAB, 0xFF, 0xFF, 0xFF]
+      - [0xEF, 0x10, 0x0D, 0x04, 0x08, 0x3F, 0x1F]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x13]
+      - [0xEF, 0x08]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x00]
+      - [0x36, 0x00]
+      - [0x3A, 0x60]
+      - [0x11]
+      - delay 100ms
+      - [0x29]
+      - delay 50ms
+
+############### UART / RS-485 ###############
+
+uart:
+  tx_pin: GPIO43
+  rx_pin: GPIO44
+  baud_rate: 115200
+  id: controller_uart
+
+packet_transport:
+  platform: uart
+  uart_id: controller_uart
+  update_interval: 500ms
+  sensors:
+    - cmd_target_temp
+    - cmd_heat_mode
+    - cmd_light_brightness
+    - cmd_light_r
+    - cmd_light_g
+    - cmd_light_b
+    - cmd_light_w
+    - cmd_clear_fault_ctr
+    - cmd_light_toggle_ctr
+
+############### ROTARY ENCODER ###############
+
+sensor:
+  - platform: rotary_encoder
+    id: panel_encoder
+    pin_a:
+      number: GPIO42
+      mode: { input: true, pullup: true }
+    pin_b:
+      number: GPIO4
+      mode: { input: true, pullup: true }
+    resolution: 1
+    on_clockwise:
+      then:
+        - lambda: |-
+            // Context-sensitive: which page is active?
+            auto page = id(lv_active_page);
+            if (page == 0) {
+              // Main page: adjust target temp (+0.5°C ≈ +1°F)
+              if (!std::isnan(id(local_target_temp))) {
+                id(target_temp_dirty) = true;
+                id(local_target_temp) = std::min(id(local_target_temp) + 0.56f, 93.5f);
+              }
+            } else if (page == 1) {
+              // Light page: adjust brightness (+5%)
+              if (!std::isnan(id(local_brightness))) {
+                id(brightness_dirty) = true;
+                id(local_brightness) = std::min(id(local_brightness) + 0.05f, 1.0f);
+              }
+            }
+    on_anticlockwise:
+      then:
+        - lambda: |-
+            auto page = id(lv_active_page);
+            if (page == 0) {
+              if (!std::isnan(id(local_target_temp))) {
+                id(target_temp_dirty) = true;
+                id(local_target_temp) = std::max(id(local_target_temp) - 0.56f, 65.5f);
+              }
+            } else if (page == 1) {
+              if (!std::isnan(id(local_brightness))) {
+                id(brightness_dirty) = true;
+                id(local_brightness) = std::max(id(local_brightness) - 0.05f, 0.0f);
+              }
+            }
+
+binary_sensor:
+  - platform: gpio
+    id: encoder_button
+    pin:
+      pcf8574: pcf
+      number: 5
+      mode: { input: true }
+      inverted: true
+    on_click:
+      min_length: 50ms
+      max_length: 500ms
+      then:
+        # Short press: context-sensitive action
+        - lambda: |-
+            auto page = id(lv_active_page);
+            if (page == 0) {
+              // Main page: toggle heat mode
+              id(heat_mode_dirty) = true;
+              id(local_heat_mode) = (id(local_heat_mode) >= 0.5f) ? 0.0f : 1.0f;
+            } else if (page == 1) {
+              // Light page: toggle light
+              id(light_toggle_ctr) += 1;
+            } else if (page == 2) {
+              // Info page: clear fault
+              id(clear_fault_ctr) += 1;
+            }
+    on_click:
+      min_length: 700ms
+      max_length: 5000ms
+      then:
+        # Long press: cycle pages
+        - lambda: |-
+            id(lv_active_page) = (id(lv_active_page) + 1) % 3;
+        - lvgl.page.next:
+
+############### CONSUMED STATUS DATA ###############
+
+  # Door sensor
+  - platform: packet_transport
+    provider: sauna-controller
+    id: door_sensor
+    on_state:
+      then:
+        - lambda: 'id(last_rx_ms) = millis();'
+
+  # Contactor aux — truth source for "heater is actually on"
+  - platform: packet_transport
+    provider: sauna-controller
+    id: contactor_aux_closed
+    on_state:
+      then:
+        - lambda: 'id(last_rx_ms) = millis();'
+        - script.execute: update_status_ring
+
+  # High-limit trip
+  - platform: packet_transport
+    provider: sauna-controller
+    id: high_limit_trip
+    on_state:
+      then:
+        - lambda: 'id(last_rx_ms) = millis();'
+
+  # Fault latched
+  - platform: packet_transport
+    provider: sauna-controller
+    id: fault_latched_bs
+    on_state:
+      then:
+        - lambda: 'id(last_rx_ms) = millis();'
+        - if:
+            condition:
+              lambda: 'return x;'
+            then:
+              - lvgl.widget.show: fault_banner
+            else:
+              - lvgl.widget.hide: fault_banner
+        - script.execute: update_status_ring
+
+  # Heat mode active
+  - platform: packet_transport
+    provider: sauna-controller
+    id: heat_mode_active
+    on_state:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            float controller_val = x ? 1.0f : 0.0f;
+            if (id(heat_mode_dirty) && abs(controller_val - id(local_heat_mode)) < 0.1f) {
+              id(heat_mode_dirty) = false;
+            }
+            if (!id(heat_mode_dirty)) {
+              id(local_heat_mode) = controller_val;
+            }
+        - script.execute: update_status_ring
+
+  # Light on/off
+  - platform: packet_transport
+    provider: sauna-controller
+    id: light_on
+    on_state:
+      then:
+        - lambda: 'id(last_rx_ms) = millis();'
+
+############### CONSUMED SENSOR DATA ###############
+
+  # Additional sensor entries (these merge with the sensor: block above)
+  # Note: ESPHome merges multiple sensor: blocks
+
+sensor:
+  # Ceiling temp — primary display
+  - platform: packet_transport
+    provider: sauna-controller
+    id: ceiling_temp_c
+    on_value:
+      then:
+        - lambda: 'id(last_rx_ms) = millis();'
+        - lvgl.label.update:
+            id: lbl_current_temp
+            text: !lambda |-
+              return str_sprintf("%.0f°", x * 9.0/5.0 + 32.0);
+        - script.execute: update_status_ring
+
+  # Bench temp
+  - platform: packet_transport
+    provider: sauna-controller
+    id: bench_temp_c
+    on_value:
+      then:
+        - lambda: 'id(last_rx_ms) = millis();'
+
+  # Target temp
+  - platform: packet_transport
+    provider: sauna-controller
+    id: target_temp_current
+    on_value:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            if (!id(synced)) {
+              id(synced) = true;
+            }
+            if (id(target_temp_dirty) && abs(x - id(local_target_temp)) < 0.3f) {
+              id(target_temp_dirty) = false;
+            }
+            if (!id(target_temp_dirty)) {
+              id(local_target_temp) = x;
+            }
+        - lvgl.label.update:
+            id: lbl_target_temp
+            text: !lambda |-
+              return str_sprintf("target %.0f°F", x * 9.0/5.0 + 32.0);
+
+  # Fault code
+  - platform: packet_transport
+    provider: sauna-controller
+    id: fault_code
+    on_value:
+      then:
+        - lambda: 'id(last_rx_ms) = millis();'
+        - lvgl.label.update:
+            id: lbl_fault_text
+            text: !lambda |-
+              int code = (int)x;
+              switch(code) {
+                case 1: return std::string("DOOR OPEN TIMEOUT");
+                case 2: return std::string("HIGH TEMPERATURE");
+                case 3: return std::string("WELDED CONTACTOR");
+                case 4: return std::string("SENSOR FAULT");
+                default: return std::string("");
+              }
+
+  # Light brightness
+  - platform: packet_transport
+    provider: sauna-controller
+    id: light_brightness_current
+    on_value:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            if (id(brightness_dirty) && abs(x - id(local_brightness)) < 0.02f) {
+              id(brightness_dirty) = false;
+            }
+            if (!id(brightness_dirty)) {
+              id(local_brightness) = x;
+            }
+
+  # Light RGBW channels
+  - platform: packet_transport
+    provider: sauna-controller
+    id: light_r_current
+    on_value:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            if (!id(light_color_dirty)) { id(local_light_r) = x; }
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: light_g_current
+    on_value:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            if (!id(light_color_dirty)) { id(local_light_g) = x; }
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: light_b_current
+    on_value:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            if (!id(light_color_dirty)) { id(local_light_b) = x; }
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: light_w_current
+    on_value:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            if (!id(light_color_dirty)) { id(local_light_w) = x; }
+
+############### COMMAND SENSORS (sent to controller) ###############
+
+  # State-based — guarded by synced + dirty
+  - platform: template
+    id: cmd_target_temp
+    lambda: |-
+      if (!id(synced) || !id(target_temp_dirty)) return NAN;
+      return id(local_target_temp);
+    update_interval: 500ms
+
+  - platform: template
+    id: cmd_heat_mode
+    lambda: |-
+      if (!id(synced) || !id(heat_mode_dirty)) return NAN;
+      return id(local_heat_mode);
+    update_interval: 500ms
+
+  - platform: template
+    id: cmd_light_brightness
+    lambda: |-
+      if (!id(synced) || !id(brightness_dirty)) return NAN;
+      return id(local_brightness);
+    update_interval: 500ms
+
+  - platform: template
+    id: cmd_light_r
+    lambda: |-
+      if (!id(synced) || !id(light_color_dirty)) return NAN;
+      return id(local_light_r);
+    update_interval: 500ms
+
+  - platform: template
+    id: cmd_light_g
+    lambda: |-
+      if (!id(synced) || !id(light_color_dirty)) return NAN;
+      return id(local_light_g);
+    update_interval: 500ms
+
+  - platform: template
+    id: cmd_light_b
+    lambda: |-
+      if (!id(synced) || !id(light_color_dirty)) return NAN;
+      return id(local_light_b);
+    update_interval: 500ms
+
+  - platform: template
+    id: cmd_light_w
+    lambda: |-
+      if (!id(synced) || !id(light_color_dirty)) return NAN;
+      return id(local_light_w);
+    update_interval: 500ms
+
+  # Counter-based one-shot commands
+  - platform: template
+    id: cmd_clear_fault_ctr
+    lambda: 'return (float)id(clear_fault_ctr);'
+    update_interval: 500ms
+
+  - platform: template
+    id: cmd_light_toggle_ctr
+    lambda: 'return (float)id(light_toggle_ctr);'
+    update_interval: 500ms
+
+############### SCRIPTS ###############
+
+script:
+  - id: update_status_ring
+    then:
+      - lambda: |-
+          uint32_t color;
+          if (id(fault_latched_bs).state) {
+            color = 0xFF0000;      // Fault — red
+          } else if (!id(heat_mode_active).state) {
+            color = 0x3366FF;      // Heat off — blue
+          } else if (id(contactor_aux_closed).state) {
+            float current_f = id(ceiling_temp_c).state * 9.0/5.0 + 32.0;
+            float target_f = id(target_temp_current).state * 9.0/5.0 + 32.0;
+            if (abs(current_f - target_f) <= 2.0) {
+              color = 0x00CC66;    // At target — green
+            } else {
+              color = 0xFF6B00;    // Heating — orange
+            }
+          } else {
+            color = 0x3366FF;      // Idle within heat mode — blue
+          }
+          id(status_ring_color) = color;
+      - lvgl.arc.update:
+          id: arc_status_ring
+          indicator:
+            arc_color: !lambda 'return lv_color_hex(id(status_ring_color));'
+
+############### INTERVALS ###############
+
+interval:
+  # Link state detection
+  - interval: 1s
+    then:
+      - lambda: |-
+          bool was_up = id(link_up);
+          bool is_up = (id(last_rx_ms) > 0) && (millis() - id(last_rx_ms) < 5000);
+          id(link_up) = is_up;
+          if (!was_up && is_up) {
+            id(target_temp_dirty) = false;
+            id(heat_mode_dirty) = false;
+            id(brightness_dirty) = false;
+            id(light_color_dirty) = false;
+            id(synced) = false;
+          }
+      - if:
+          condition:
+            lambda: 'return !id(link_up) && id(last_rx_ms) > 0;'
+          then:
+            - lvgl.widget.show: no_link_warning
+          else:
+            - lvgl.widget.hide: no_link_warning
+
+  # Light color echo-back release (checks all 4 channels together)
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (id(light_color_dirty)) {
+            bool match = abs(id(light_r_current).state - id(local_light_r)) < 0.02f
+                      && abs(id(light_g_current).state - id(local_light_g)) < 0.02f
+                      && abs(id(light_b_current).state - id(local_light_b)) < 0.02f
+                      && abs(id(light_w_current).state - id(local_light_w)) < 0.02f;
+            if (match) { id(light_color_dirty) = false; }
+          }
+
+  # UI refresh — push local mirrors to display widgets
+  - interval: 500ms
+    then:
+      - lambda: |-
+          if (!id(synced)) return;
+          // Update target temp label from local mirror (reflects panel-originated changes)
+          if (!std::isnan(id(local_target_temp))) {
+            float tf = id(local_target_temp) * 9.0/5.0 + 32.0;
+            // Update arc position
+          }
+
+############### LVGL UI ###############
+
+lvgl:
+  displays:
+    - panel_display
+  touchscreens:
+    - panel_touch
+  encoders:
+    - group: main_group
+      enter_button: encoder_button
+      sensor: panel_encoder
+  color_depth: 16
+  buffer_size: 50%
+  page_wrap: true
+  style_definitions:
+    # Reusable styles
+    - id: style_dark_bg
+      bg_color: 0x1A1A2E
+      bg_opa: COVER
+    - id: style_label_warm
+      text_color: 0xF0E6D3
+    - id: style_label_dim
+      text_color: 0x888888
+
+  pages:
+    ###########################################################
+    # PAGE 1: MAIN — Temperature Control
+    ###########################################################
+    - id: main_page
+      bg_color: 0x1A1A2E
+      bg_opa: COVER
+      widgets:
+        # --- Status ring (outer arc) ---
+        - arc:
+            id: arc_status_ring
+            x: 15
+            y: 15
+            width: 450
+            height: 450
+            align: TOP_LEFT
+            adjustable: false
+            start_angle: 0
+            end_angle: 360
+            value: 100
+            min_value: 0
+            max_value: 100
+            arc_width: 8
+            arc_color: 0x333333
+            indicator:
+              arc_width: 8
+              arc_color: 0x3366FF
+
+        # --- Current temperature (large, center) ---
+        - label:
+            id: lbl_current_temp
+            align: CENTER
+            y: -30
+            text: "--°"
+            text_font: montserrat_48
+            text_color: 0xF0E6D3
+
+        # --- Target temperature ---
+        - label:
+            id: lbl_target_temp
+            align: CENTER
+            y: 25
+            text: "target --°F"
+            text_font: montserrat_20
+            text_color: 0x888888
+
+        # --- Status text ---
+        - label:
+            id: lbl_status
+            align: CENTER
+            y: 65
+            text: "OFF"
+            text_font: montserrat_16
+            text_color: 0x3366FF
+
+        # --- Page indicator dots ---
+        - label:
+            align: CENTER
+            y: 200
+            text: "●  ○  ○"
+            text_font: montserrat_14
+            text_color: 0x555555
+
+        # --- Fault banner (hidden by default) ---
+        - obj:
+            id: fault_banner
+            align: CENTER
+            width: 300
+            height: 60
+            bg_color: 0xCC0000
+            bg_opa: COVER
+            radius: 12
+            hidden: true
+            widgets:
+              - label:
+                  id: lbl_fault_text
+                  align: CENTER
+                  text: "FAULT"
+                  text_font: montserrat_20
+                  text_color: 0xFFFFFF
+
+        # --- No link warning (hidden by default) ---
+        - label:
+            id: no_link_warning
+            align: TOP_MID
+            y: 60
+            text: "NO LINK"
+            text_font: montserrat_16
+            text_color: 0xFF4444
+            hidden: true
+
+    ###########################################################
+    # PAGE 2: LIGHTING
+    ###########################################################
+    - id: light_page
+      bg_color: 0x1A1A2E
+      bg_opa: COVER
+      widgets:
+        # --- Title ---
+        - label:
+            align: TOP_MID
+            y: 60
+            text: "LIGHTS"
+            text_font: montserrat_20
+            text_color: 0xF0E6D3
+
+        # --- Brightness arc ---
+        - arc:
+            id: arc_brightness
+            align: CENTER
+            y: -15
+            width: 200
+            height: 200
+            start_angle: 135
+            end_angle: 45
+            min_value: 0
+            max_value: 100
+            value: 75
+            adjustable: true
+            arc_width: 12
+            arc_color: 0x333333
+            group: main_group
+            indicator:
+              arc_width: 12
+              arc_color: 0xFF6B00
+            knob:
+              bg_color: 0xF0E6D3
+              radius: 6
+              width: 12
+              height: 12
+            on_value:
+              then:
+                - lambda: |-
+                    id(brightness_dirty) = true;
+                    id(local_brightness) = x / 100.0f;
+
+        # --- Brightness percentage label ---
+        - label:
+            id: lbl_brightness_pct
+            align: CENTER
+            y: -15
+            text: "75%"
+            text_font: montserrat_28
+            text_color: 0xF0E6D3
+
+        # --- Preset row 1: Warm White / Sunset ---
+        - button:
+            id: btn_preset_warm
+            x: 90
+            y: 310
+            width: 130
+            height: 45
+            bg_color: 0x444444
+            radius: 8
+            group: main_group
+            on_click:
+              then:
+                - lambda: |-
+                    id(light_color_dirty) = true;
+                    id(local_light_r) = 0.0f;
+                    id(local_light_g) = 0.0f;
+                    id(local_light_b) = 0.0f;
+                    id(local_light_w) = 1.0f;
+                    id(active_preset) = 0;
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "WARM"
+                  text_font: montserrat_14
+                  text_color: 0xF0E6D3
+
+        - button:
+            id: btn_preset_sunset
+            x: 260
+            y: 310
+            width: 130
+            height: 45
+            bg_color: 0x444444
+            radius: 8
+            group: main_group
+            on_click:
+              then:
+                - lambda: |-
+                    id(light_color_dirty) = true;
+                    id(local_light_r) = 1.0f;
+                    id(local_light_g) = 0.3f;
+                    id(local_light_b) = 0.0f;
+                    id(local_light_w) = 0.2f;
+                    id(active_preset) = 1;
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "SUNSET"
+                  text_font: montserrat_14
+                  text_color: 0xF0E6D3
+
+        # --- Preset row 2: Red Glow / Nordic Blue ---
+        - button:
+            id: btn_preset_red
+            x: 90
+            y: 365
+            width: 130
+            height: 45
+            bg_color: 0x444444
+            radius: 8
+            group: main_group
+            on_click:
+              then:
+                - lambda: |-
+                    id(light_color_dirty) = true;
+                    id(local_light_r) = 1.0f;
+                    id(local_light_g) = 0.0f;
+                    id(local_light_b) = 0.0f;
+                    id(local_light_w) = 0.0f;
+                    id(active_preset) = 2;
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "RED"
+                  text_font: montserrat_14
+                  text_color: 0xF0E6D3
+
+        - button:
+            id: btn_preset_blue
+            x: 260
+            y: 365
+            width: 130
+            height: 45
+            bg_color: 0x444444
+            radius: 8
+            group: main_group
+            on_click:
+              then:
+                - lambda: |-
+                    id(light_color_dirty) = true;
+                    id(local_light_r) = 0.0f;
+                    id(local_light_g) = 0.2f;
+                    id(local_light_b) = 1.0f;
+                    id(local_light_w) = 0.1f;
+                    id(active_preset) = 3;
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "BLUE"
+                  text_font: montserrat_14
+                  text_color: 0xF0E6D3
+
+        # --- Page indicator dots ---
+        - label:
+            align: CENTER
+            y: 200
+            text: "○  ●  ○"
+            text_font: montserrat_14
+            text_color: 0x555555
+
+    ###########################################################
+    # PAGE 3: STATUS / INFO
+    ###########################################################
+    - id: info_page
+      bg_color: 0x1A1A2E
+      bg_opa: COVER
+      widgets:
+        # --- Title ---
+        - label:
+            align: TOP_MID
+            y: 60
+            text: "STATUS"
+            text_font: montserrat_20
+            text_color: 0xF0E6D3
+
+        # --- Temperature readouts ---
+        - label:
+            id: lbl_info_ceiling
+            x: 100
+            y: 110
+            text: "Ceiling  --°F"
+            text_font: montserrat_18
+            text_color: 0xF0E6D3
+
+        - label:
+            id: lbl_info_bench
+            x: 100
+            y: 145
+            text: "Bench    --°F"
+            text_font: montserrat_18
+            text_color: 0xF0E6D3
+
+        # --- Status items ---
+        - label:
+            id: lbl_info_door
+            x: 100
+            y: 195
+            text: "Door     --"
+            text_font: montserrat_16
+            text_color: 0x888888
+
+        - label:
+            id: lbl_info_heater
+            x: 100
+            y: 225
+            text: "Heater   --"
+            text_font: montserrat_16
+            text_color: 0x888888
+
+        - label:
+            id: lbl_info_hilimit
+            x: 100
+            y: 255
+            text: "Hi-Limit --"
+            text_font: montserrat_16
+            text_color: 0x888888
+
+        - label:
+            id: lbl_info_aux
+            x: 100
+            y: 285
+            text: "Aux      --"
+            text_font: montserrat_16
+            text_color: 0x888888
+
+        # --- Clear fault button (visible only when faulted) ---
+        - button:
+            id: btn_clear_fault
+            align: CENTER
+            y: 145
+            width: 200
+            height: 50
+            bg_color: 0xCC3333
+            radius: 10
+            hidden: true
+            group: main_group
+            on_click:
+              then:
+                - lambda: 'id(clear_fault_ctr) += 1;'
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "CLEAR FAULT"
+                  text_font: montserrat_16
+                  text_color: 0xFFFFFF
+
+        # --- Page indicator dots ---
+        - label:
+            align: CENTER
+            y: 200
+            text: "○  ○  ●"
+            text_font: montserrat_14
+            text_color: 0x555555
