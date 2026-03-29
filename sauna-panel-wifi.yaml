@@ -6,6 +6,7 @@
 substitutions:
   device_name: sauna-panel
   friendly_name: Sauna Panel
+  link_timeout_ms: "30000"
 
 packages:
   common: !include sauna-panel-common.yaml
@@ -22,7 +23,9 @@ sensor:
     entity_id: sensor.sauna_controller_ceiling_temp
     on_value:
       then:
-        - lambda: 'id(last_rx_ms) = millis();'
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            id(current_temp) = x;
         - lvgl.label.update:
             id: lbl_current_temp
             text: !lambda 'return str_sprintf("%.0f°", x);'
@@ -69,15 +72,13 @@ sensor:
         - lambda: |-
             id(last_rx_ms) = millis();
             float norm = x / 255.0f;
-            if (id(brightness_dirty) && abs(norm - id(local_brightness)) < 0.02f) {
+            if (id(brightness_dirty) && abs(norm - id(local_brightness)) < 0.03f) {
               id(brightness_dirty) = false;
             }
             if (!id(brightness_dirty)) {
               id(local_brightness) = norm;
+              lv_arc_set_value(id(arc_brightness), (int)(norm * 100.0f));
             }
-        - lvgl.arc.update:
-            id: arc_brightness
-            value: !lambda 'return (int)(x / 2.55f);'
 
 
 ############### CONSUMED STATUS DATA ###############
@@ -129,9 +130,10 @@ text_sensor:
     on_value:
       then:
         - lambda: |-
+            // Skip if a preset was just selected from the panel (3s cooldown)
+            if (id(preset_set_ms) > 0 && (millis() - id(preset_set_ms)) < 3000) return;
             float hue = 0;
             sscanf(x.c_str(), "(%f", &hue);
-            // Also try without parens in case format differs
             if (hue == 0 && x.length() > 0) {
               sscanf(x.c_str(), "%f", &hue);
             }
@@ -195,7 +197,7 @@ text_sensor:
 
   - platform: homeassistant
     id: last_trip_reason
-    entity_id: text_sensor.sauna_controller_last_trip_reason
+    entity_id: sensor.sauna_controller_last_trip_reason
     on_value:
       then:
         - lambda: |-
@@ -206,11 +208,13 @@ text_sensor:
               lambda: 'return x.length() > 0;'
             then:
               - lvgl.widget.show: fault_banner
+              - lvgl.widget.show: btn_clear_fault
               - lvgl.label.update:
                   id: lbl_fault_text
                   text: !lambda 'return x;'
             else:
               - lvgl.widget.hide: fault_banner
+              - lvgl.widget.hide: btn_clear_fault
         - script.execute: update_status_ring
 
 ############### COMMAND SENDING ###############

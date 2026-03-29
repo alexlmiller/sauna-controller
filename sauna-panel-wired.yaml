@@ -7,6 +7,7 @@
 substitutions:
   device_name: sauna-panel-wired
   friendly_name: Sauna Panel
+  link_timeout_ms: "5000"
 
 packages:
   common: !include sauna-panel-common.yaml
@@ -42,7 +43,9 @@ sensor:
     id: ceiling_temp_c
     on_value:
       then:
-        - lambda: 'id(last_rx_ms) = millis();'
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            id(current_temp) = x * 9.0/5.0 + 32.0;
         - lvgl.label.update:
             id: lbl_current_temp
             text: !lambda 'return str_sprintf("%.0f°", x * 9.0/5.0 + 32.0);'
@@ -91,6 +94,7 @@ sensor:
               lambda: 'return (int)x > 0;'
             then:
               - lvgl.widget.show: fault_banner
+              - lvgl.widget.show: btn_clear_fault
               - lvgl.label.update:
                   id: lbl_fault_text
                   text: !lambda |-
@@ -104,6 +108,7 @@ sensor:
                     }
             else:
               - lvgl.widget.hide: fault_banner
+              - lvgl.widget.hide: btn_clear_fault
         - script.execute: update_status_ring
 
   - platform: packet_transport
@@ -167,59 +172,59 @@ sensor:
     lambda: |-
       if (!id(synced) || !id(target_temp_dirty)) return NAN;
       return (id(local_target_temp) - 32.0f) * 5.0f / 9.0f;
-    update_interval: 500ms
+    update_interval: 200ms
 
   - platform: template
     id: cmd_heat_mode
     lambda: |-
       if (!id(synced) || !id(heat_mode_dirty)) return NAN;
       return id(local_heat_mode);
-    update_interval: 500ms
+    update_interval: 200ms
 
   - platform: template
     id: cmd_light_brightness
     lambda: |-
       if (!id(synced) || !id(brightness_dirty)) return NAN;
       return id(local_brightness);
-    update_interval: 500ms
+    update_interval: 200ms
 
   - platform: template
     id: cmd_light_r
     lambda: |-
       if (!id(synced) || !id(light_color_dirty)) return NAN;
       return id(local_light_r);
-    update_interval: 500ms
+    update_interval: 200ms
 
   - platform: template
     id: cmd_light_g
     lambda: |-
       if (!id(synced) || !id(light_color_dirty)) return NAN;
       return id(local_light_g);
-    update_interval: 500ms
+    update_interval: 200ms
 
   - platform: template
     id: cmd_light_b
     lambda: |-
       if (!id(synced) || !id(light_color_dirty)) return NAN;
       return id(local_light_b);
-    update_interval: 500ms
+    update_interval: 200ms
 
   - platform: template
     id: cmd_light_w
     lambda: |-
       if (!id(synced) || !id(light_color_dirty)) return NAN;
       return id(local_light_w);
-    update_interval: 500ms
+    update_interval: 200ms
 
   - platform: template
     id: cmd_clear_fault_ctr
     lambda: 'return (float)id(clear_fault_ctr);'
-    update_interval: 500ms
+    update_interval: 200ms
 
   - platform: template
     id: cmd_light_toggle_ctr
     lambda: 'return (float)id(light_toggle_ctr);'
-    update_interval: 500ms
+    update_interval: 200ms
 
 ############### CONSUMED STATUS DATA ###############
 
@@ -273,8 +278,10 @@ binary_sensor:
               lambda: 'return x;'
             then:
               - lvgl.widget.show: fault_banner
+              - lvgl.widget.show: btn_clear_fault
             else:
               - lvgl.widget.hide: fault_banner
+              - lvgl.widget.hide: btn_clear_fault
         - script.execute: update_status_ring
 
   - platform: packet_transport
@@ -307,7 +314,7 @@ binary_sensor:
 ############### WIRED COMMAND FLAGS ###############
 # Preset clicks set preset_pending; convert to RGBW dirty flags here
 interval:
-  - interval: 500ms
+  - interval: 100ms
     then:
       - lambda: |-
           if (id(preset_pending) >= 0) {
@@ -340,4 +347,12 @@ interval:
           if (id(clear_fault_pending)) {
             id(clear_fault_pending) = false;
             id(clear_fault_ctr) += 1;
+          }
+          // RGBW echo-back release: clear dirty when controller matches
+          if (id(light_color_dirty)) {
+            bool match = abs(id(light_r_current).state - id(local_light_r)) < 0.02f
+                      && abs(id(light_g_current).state - id(local_light_g)) < 0.02f
+                      && abs(id(light_b_current).state - id(local_light_b)) < 0.02f
+                      && abs(id(light_w_current).state - id(local_light_w)) < 0.02f;
+            if (match) { id(light_color_dirty) = false; }
           }

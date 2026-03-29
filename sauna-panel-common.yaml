@@ -136,6 +136,14 @@ globals:
   - id: heater_running
     type: bool
     initial_value: "false"
+  - id: current_temp
+    type: float
+    initial_value: "NAN"
+
+  # Preset selection timestamp (debounce HA echo)
+  - id: preset_set_ms
+    type: uint32_t
+    initial_value: "0"
 
   # Transport-agnostic command flags
   - id: light_toggle_pending
@@ -311,10 +319,10 @@ sensor:
                 id(local_target_temp) = std::min(id(local_target_temp) + 1.0f, 200.0f);
               }
             } else if (page == 1) {
-              // Light page: adjust brightness (+5%)
               if (!std::isnan(id(local_brightness))) {
                 id(brightness_dirty) = true;
                 id(local_brightness) = std::min(id(local_brightness) + 0.05f, 1.0f);
+                lv_arc_set_value(id(arc_brightness), (int)(id(local_brightness) * 100.0f));
               }
             }
     on_anticlockwise:
@@ -329,6 +337,7 @@ sensor:
               if (!std::isnan(id(local_brightness))) {
                 id(brightness_dirty) = true;
                 id(local_brightness) = std::max(id(local_brightness) - 0.05f, 0.0f);
+                lv_arc_set_value(id(arc_brightness), (int)(id(local_brightness) * 100.0f));
               }
             }
 
@@ -381,14 +390,20 @@ script:
     then:
       - lambda: |-
           uint32_t color;
-          if (id(fault_active)) {
+          // Guard: before first sync, show gray
+          if (std::isnan(id(local_heat_mode)) || std::isnan(id(current_temp))) {
+            color = 0x555555;
+          } else if (id(fault_active)) {
             color = 0xFF0000;      // Fault — red
           } else if (id(local_heat_mode) < 0.5f) {
             color = 0x555555;      // Heat off — gray
           } else if (id(heater_running)) {
-            float current_f = id(local_target_temp);  // both stored in display units
-            // approximate "at target" — will refine when real data flows
-            color = 0xFF6B00;      // Heating — orange
+            if (!std::isnan(id(local_target_temp)) &&
+                abs(id(current_temp) - id(local_target_temp)) <= 2.0f) {
+              color = 0x00CC66;    // At target — green
+            } else {
+              color = 0xFF6B00;    // Heating — orange
+            }
           } else {
             color = 0x3366AA;      // Standby — muted blue
           }
@@ -401,10 +416,41 @@ script:
           id: lbl_status
           text_color: !lambda 'return lv_color_hex(id(status_ring_color));'
           text: !lambda |-
+            if (std::isnan(id(local_heat_mode)) || std::isnan(id(current_temp)))
+              return std::string("---");
             if (id(fault_active)) return std::string("FAULT");
             if (id(local_heat_mode) < 0.5f) return std::string("OFF");
-            if (id(heater_running)) return std::string("HEATING");
+            if (id(heater_running)) {
+              if (!std::isnan(id(local_target_temp)) &&
+                  abs(id(current_temp) - id(local_target_temp)) <= 2.0f)
+                return std::string("AT TARGET");
+              return std::string("HEATING");
+            }
             return std::string("STANDBY");
+
+  - id: update_light_selection
+    then:
+      # Set outline on active preset circle
+      - lvgl.obj.update:
+          id: btn_preset_warm
+          outline_width: !lambda 'return id(active_preset) == 0 ? 3 : 0;'
+          outline_color: 0x999999
+          outline_pad: 4
+      - lvgl.obj.update:
+          id: btn_preset_sunset
+          outline_width: !lambda 'return id(active_preset) == 1 ? 3 : 0;'
+          outline_color: 0x999999
+          outline_pad: 4
+      - lvgl.obj.update:
+          id: btn_preset_red
+          outline_width: !lambda 'return id(active_preset) == 2 ? 3 : 0;'
+          outline_color: 0x999999
+          outline_pad: 4
+      - lvgl.obj.update:
+          id: btn_preset_blue
+          outline_width: !lambda 'return id(active_preset) == 3 ? 3 : 0;'
+          outline_color: 0x999999
+          outline_pad: 4
 
   - id: update_light_ring
     then:
@@ -431,7 +477,7 @@ interval:
     then:
       - lambda: |-
           bool was_up = id(link_up);
-          bool is_up = (id(last_rx_ms) > 0) && (millis() - id(last_rx_ms) < 30000);
+          bool is_up = (id(last_rx_ms) > 0) && (millis() - id(last_rx_ms) < ${link_timeout_ms});
           id(link_up) = is_up;
           if (!was_up && is_up) {
             id(target_temp_dirty) = false;
@@ -565,16 +611,16 @@ lvgl:
             align: CENTER
             y: 55
             text: "--°F"
-            text_font: font_body
+            text_font: font_body_lg
             text_color: 0x666666
 
         # Status
         - label:
             id: lbl_status
             align: CENTER
-            y: 82
+            y: 105
             text: "OFF"
-            text_font: font_body
+            text_font: font_body_lg
             text_color: 0x555555
 
         # Fault
@@ -690,105 +736,77 @@ lvgl:
         # Hidden brightness label for data binding
         - label:
             id: lbl_brightness_pct
-            align: CENTER
-            y: 0
-            text: ""
-            text_font: font_body
-            text_color: 0x111118
             hidden: true
+            text: ""
 
-        # 2x2 color circles
-        # WHITE (top-left)
+        # 2x2 color circles — no labels, bigger
         - button:
             id: btn_preset_warm
             align: CENTER
-            x: -55
-            y: -55
-            width: 70
-            height: 70
-            radius: 35
+            x: -52
+            y: -22
+            width: 80
+            height: 80
+            radius: 40
             bg_color: 0xFFFFFF
             border_width: 0
+            outline_width: 0
             on_click:
               then:
-                - lambda: 'id(active_preset) = 0; id(preset_pending) = 0;'
+                - lambda: 'id(active_preset) = 0; id(preset_pending) = 0; id(preset_set_ms) = millis();'
                 - script.execute: update_light_ring
-        - label:
-            align: CENTER
-            x: -55
-            y: 0
-            text: "WHITE"
-            text_font: font_body
-            text_color: 0x777777
+                - script.execute: update_light_selection
 
-        # WARM (top-right)
         - button:
             id: btn_preset_sunset
             align: CENTER
-            x: 55
-            y: -55
-            width: 70
-            height: 70
-            radius: 35
+            x: 52
+            y: -22
+            width: 80
+            height: 80
+            radius: 40
             bg_color: 0xFFB366
             border_width: 0
+            outline_width: 0
             on_click:
               then:
-                - lambda: 'id(active_preset) = 1; id(preset_pending) = 1;'
+                - lambda: 'id(active_preset) = 1; id(preset_pending) = 1; id(preset_set_ms) = millis();'
                 - script.execute: update_light_ring
-        - label:
-            align: CENTER
-            x: 55
-            y: 0
-            text: "WARM"
-            text_font: font_body
-            text_color: 0x777777
+                - script.execute: update_light_selection
 
-        # RED (bottom-left)
         - button:
             id: btn_preset_red
             align: CENTER
-            x: -55
-            y: 60
-            width: 70
-            height: 70
-            radius: 35
+            x: -52
+            y: 82
+            width: 80
+            height: 80
+            radius: 40
             bg_color: 0x8B0000
             border_width: 0
+            outline_width: 0
             on_click:
               then:
-                - lambda: 'id(active_preset) = 2; id(preset_pending) = 2;'
+                - lambda: 'id(active_preset) = 2; id(preset_pending) = 2; id(preset_set_ms) = millis();'
                 - script.execute: update_light_ring
-        - label:
-            align: CENTER
-            x: -55
-            y: 115
-            text: "RED"
-            text_font: font_body
-            text_color: 0x777777
+                - script.execute: update_light_selection
 
-        # GREEN (bottom-right)
         - button:
             id: btn_preset_blue
             align: CENTER
-            x: 55
-            y: 60
-            width: 70
-            height: 70
-            radius: 35
+            x: 52
+            y: 82
+            width: 80
+            height: 80
+            radius: 40
             bg_color: 0x006400
             border_width: 0
+            outline_width: 0
             on_click:
               then:
-                - lambda: 'id(active_preset) = 3; id(preset_pending) = 3;'
+                - lambda: 'id(active_preset) = 3; id(preset_pending) = 3; id(preset_set_ms) = millis();'
                 - script.execute: update_light_ring
-        - label:
-            align: CENTER
-            x: 55
-            y: 115
-            text: "GREEN"
-            text_font: font_body
-            text_color: 0x777777
+                - script.execute: update_light_selection
 
         # Page dots
         # Page nav — tap zone in ring gap at bottom
@@ -845,8 +863,8 @@ lvgl:
       bg_opa: COVER
       widgets:
         - label:
-            align: TOP_MID
-            y: 85
+            align: CENTER
+            y: -115
             text: "STATUS"
             text_font: font_body
             text_color: 0x555555
