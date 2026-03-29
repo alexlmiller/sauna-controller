@@ -10,7 +10,7 @@ substitutions:
   link_timeout_ms: "5000"
 
 packages:
-  common: !include sauna-panel-common.yaml
+  common: !include packages/sauna-panel-common.yaml
 
 ############### UART / RS-485 ###############
 
@@ -23,7 +23,7 @@ uart:
 packet_transport:
   platform: uart
   uart_id: controller_uart
-  update_interval: 500ms
+  update_interval: 150ms
   sensors:
     - cmd_target_temp
     - cmd_heat_mode
@@ -73,15 +73,9 @@ sensor:
             id(last_rx_ms) = millis();
             float temp_f = x * 9.0/5.0 + 32.0;
             if (!id(synced)) id(synced) = true;
-            if (id(target_temp_dirty) && abs(temp_f - id(local_target_temp)) < 1.5f) {
-              id(target_temp_dirty) = false;
-            }
-            if (!id(target_temp_dirty)) {
+            if (millis() - id(last_heater_interaction_ms) > 2000) {
               id(local_target_temp) = temp_f;
             }
-        - lvgl.label.update:
-            id: lbl_target_temp
-            text: !lambda 'return str_sprintf("%.0f°F", x * 9.0/5.0 + 32.0);'
 
   - platform: packet_transport
     provider: sauna-controller
@@ -118,15 +112,10 @@ sensor:
       then:
         - lambda: |-
             id(last_rx_ms) = millis();
-            if (id(brightness_dirty) && abs(x - id(local_brightness)) < 0.02f) {
-              id(brightness_dirty) = false;
-            }
-            if (!id(brightness_dirty)) {
+            if (millis() - id(last_brightness_interaction_ms) > 2000) {
               id(local_brightness) = x;
+              lv_arc_set_value(id(arc_brightness), (int)(x * 100.0f));
             }
-        - lvgl.arc.update:
-            id: arc_brightness
-            value: !lambda 'return (int)(x * 100.0f);'
 
   - platform: packet_transport
     provider: sauna-controller
@@ -135,7 +124,7 @@ sensor:
       then:
         - lambda: |-
             id(last_rx_ms) = millis();
-            if (!id(light_color_dirty)) { id(local_light_r) = x; }
+            if (millis() - id(last_color_interaction_ms) > 2000) { id(local_light_r) = x; }
 
   - platform: packet_transport
     provider: sauna-controller
@@ -144,7 +133,7 @@ sensor:
       then:
         - lambda: |-
             id(last_rx_ms) = millis();
-            if (!id(light_color_dirty)) { id(local_light_g) = x; }
+            if (millis() - id(last_color_interaction_ms) > 2000) { id(local_light_g) = x; }
 
   - platform: packet_transport
     provider: sauna-controller
@@ -153,7 +142,7 @@ sensor:
       then:
         - lambda: |-
             id(last_rx_ms) = millis();
-            if (!id(light_color_dirty)) { id(local_light_b) = x; }
+            if (millis() - id(last_color_interaction_ms) > 2000) { id(local_light_b) = x; }
 
   - platform: packet_transport
     provider: sauna-controller
@@ -162,69 +151,90 @@ sensor:
       then:
         - lambda: |-
             id(last_rx_ms) = millis();
-            if (!id(light_color_dirty)) { id(local_light_w) = x; }
+            if (millis() - id(last_color_interaction_ms) > 2000) {
+              id(local_light_w) = x;
+              // Derive ring color from RGBW values
+              float r = id(local_light_r), g = id(local_light_g);
+              float b = id(local_light_b), w = id(local_light_w);
+              uint32_t color;
+              if (w > 0.5f && r < 0.1f && g < 0.1f && b < 0.1f) {
+                color = 0xFFFFFF;   // WHITE
+              } else if (w > 0.3f && r > 0.2f) {
+                color = 0xFFB366;   // WARM
+              } else if (r > 0.5f && g < 0.2f && b < 0.2f) {
+                color = 0x8B0000;   // RED
+              } else if (g > 0.2f && r < 0.1f && b < 0.1f) {
+                color = 0x006400;   // GREEN
+              } else if (b > 0.5f) {
+                color = 0x3388FF;   // BLUE
+              } else {
+                color = 0xFF6B00;   // default
+              }
+              id(light_ring_color) = color;
+            }
+        - script.execute: update_light_ring
 
   ############### COMMAND SENSORS ###############
 
-  # Target temp — sent in °F (local mirror is °F), controller expects °C
+  # Commands — publish value for 2s after interaction, then NaN
   - platform: template
     id: cmd_target_temp
     lambda: |-
-      if (!id(synced) || !id(target_temp_dirty)) return NAN;
+      if (!id(synced) || millis() - id(last_heater_interaction_ms) > 2000) return NAN;
       return (id(local_target_temp) - 32.0f) * 5.0f / 9.0f;
-    update_interval: 200ms
+    update_interval: 150ms
 
   - platform: template
     id: cmd_heat_mode
     lambda: |-
-      if (!id(synced) || !id(heat_mode_dirty)) return NAN;
+      if (!id(synced) || millis() - id(last_heater_interaction_ms) > 2000) return NAN;
       return id(local_heat_mode);
-    update_interval: 200ms
+    update_interval: 150ms
 
   - platform: template
     id: cmd_light_brightness
     lambda: |-
-      if (!id(synced) || !id(brightness_dirty)) return NAN;
+      if (!id(synced) || millis() - id(last_brightness_interaction_ms) > 2000) return NAN;
       return id(local_brightness);
-    update_interval: 200ms
+    update_interval: 150ms
 
   - platform: template
     id: cmd_light_r
     lambda: |-
-      if (!id(synced) || !id(light_color_dirty)) return NAN;
+      if (!id(synced) || millis() - id(last_color_interaction_ms) > 2000) return NAN;
       return id(local_light_r);
-    update_interval: 200ms
+    update_interval: 150ms
 
   - platform: template
     id: cmd_light_g
     lambda: |-
-      if (!id(synced) || !id(light_color_dirty)) return NAN;
+      if (!id(synced) || millis() - id(last_color_interaction_ms) > 2000) return NAN;
       return id(local_light_g);
-    update_interval: 200ms
+    update_interval: 150ms
 
   - platform: template
     id: cmd_light_b
     lambda: |-
-      if (!id(synced) || !id(light_color_dirty)) return NAN;
+      if (!id(synced) || millis() - id(last_color_interaction_ms) > 2000) return NAN;
       return id(local_light_b);
-    update_interval: 200ms
+    update_interval: 150ms
 
   - platform: template
     id: cmd_light_w
     lambda: |-
-      if (!id(synced) || !id(light_color_dirty)) return NAN;
+      if (!id(synced) || millis() - id(last_color_interaction_ms) > 2000) return NAN;
       return id(local_light_w);
-    update_interval: 200ms
+    update_interval: 150ms
 
   - platform: template
     id: cmd_clear_fault_ctr
     lambda: 'return (float)id(clear_fault_ctr);'
-    update_interval: 200ms
+    update_interval: 150ms
 
   - platform: template
     id: cmd_light_toggle_ctr
     lambda: 'return (float)id(light_toggle_ctr);'
-    update_interval: 200ms
+    update_interval: 150ms
 
 ############### CONSUMED STATUS DATA ###############
 
@@ -292,10 +302,7 @@ binary_sensor:
         - lambda: |-
             id(last_rx_ms) = millis();
             float controller_val = x ? 1.0f : 0.0f;
-            if (id(heat_mode_dirty) && abs(controller_val - id(local_heat_mode)) < 0.1f) {
-              id(heat_mode_dirty) = false;
-            }
-            if (!id(heat_mode_dirty)) {
+            if (millis() - id(last_heater_interaction_ms) > 2000) {
               id(local_heat_mode) = controller_val;
             }
         - script.execute: update_status_ring
@@ -312,7 +319,7 @@ binary_sensor:
         - lambda: 'id(last_rx_ms) = millis();'
 
 ############### WIRED COMMAND FLAGS ###############
-# Preset clicks set preset_pending; convert to RGBW dirty flags here
+# Preset/one-shot command processing
 interval:
   - interval: 100ms
     then:
@@ -320,7 +327,7 @@ interval:
           if (id(preset_pending) >= 0) {
             int p = id(preset_pending);
             id(preset_pending) = -1;
-            id(light_color_dirty) = true;
+            id(last_color_interaction_ms) = millis();
             switch(p) {
               case 0: // WHITE
                 id(local_light_r) = 0.0f; id(local_light_g) = 0.0f;
@@ -347,12 +354,4 @@ interval:
           if (id(clear_fault_pending)) {
             id(clear_fault_pending) = false;
             id(clear_fault_ctr) += 1;
-          }
-          // RGBW echo-back release: clear dirty when controller matches
-          if (id(light_color_dirty)) {
-            bool match = abs(id(light_r_current).state - id(local_light_r)) < 0.02f
-                      && abs(id(light_g_current).state - id(local_light_g)) < 0.02f
-                      && abs(id(light_b_current).state - id(local_light_b)) < 0.02f
-                      && abs(id(light_w_current).state - id(local_light_w)) < 0.02f;
-            if (match) { id(light_color_dirty) = false; }
           }

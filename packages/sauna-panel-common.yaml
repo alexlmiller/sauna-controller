@@ -84,19 +84,16 @@ globals:
     type: float
     initial_value: "NAN"
 
-  # Dirty flags — true after user interaction
-  - id: target_temp_dirty
-    type: bool
-    initial_value: "false"
-  - id: heat_mode_dirty
-    type: bool
-    initial_value: "false"
-  - id: brightness_dirty
-    type: bool
-    initial_value: "false"
-  - id: light_color_dirty
-    type: bool
-    initial_value: "false"
+  # Interaction timestamps — suppress controller echo for 2s after user input
+  - id: last_heater_interaction_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: last_brightness_interaction_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: last_color_interaction_ms
+    type: uint32_t
+    initial_value: "0"
 
   # One-shot action counters
   - id: clear_fault_ctr
@@ -140,7 +137,7 @@ globals:
     type: float
     initial_value: "NAN"
 
-  # Preset selection timestamp (debounce HA echo)
+  # Preset selection timestamp (debounce HA echo for WiFi)
   - id: preset_set_ms
     type: uint32_t
     initial_value: "0"
@@ -314,13 +311,15 @@ sensor:
             // Context-sensitive: which page is active?
             auto page = id(lv_active_page);
             if (page == 0) {
-              // Temp page: adjust target (pending — not sent until click)
+              // Temp page: preview target (sent on click)
               if (!std::isnan(id(local_target_temp))) {
+                id(last_heater_interaction_ms) = millis();
                 id(local_target_temp) = std::min(id(local_target_temp) + 1.0f, 200.0f);
               }
             } else if (page == 1) {
+              // Light page: adjust brightness (sent immediately)
               if (!std::isnan(id(local_brightness))) {
-                id(brightness_dirty) = true;
+                id(last_brightness_interaction_ms) = millis();
                 id(local_brightness) = std::min(id(local_brightness) + 0.05f, 1.0f);
                 lv_arc_set_value(id(arc_brightness), (int)(id(local_brightness) * 100.0f));
               }
@@ -331,11 +330,12 @@ sensor:
             auto page = id(lv_active_page);
             if (page == 0) {
               if (!std::isnan(id(local_target_temp))) {
+                id(last_heater_interaction_ms) = millis();
                 id(local_target_temp) = std::max(id(local_target_temp) - 1.0f, 150.0f);
               }
             } else if (page == 1) {
               if (!std::isnan(id(local_brightness))) {
-                id(brightness_dirty) = true;
+                id(last_brightness_interaction_ms) = millis();
                 id(local_brightness) = std::max(id(local_brightness) - 0.05f, 0.0f);
                 lv_arc_set_value(id(arc_brightness), (int)(id(local_brightness) * 100.0f));
               }
@@ -359,8 +359,7 @@ binary_sensor:
               auto page = id(lv_active_page);
               if (page == 0) {
                 // Temp page: "Set" — send target temp + turn on
-                id(target_temp_dirty) = true;
-                id(heat_mode_dirty) = true;
+                id(last_heater_interaction_ms) = millis();
                 id(local_heat_mode) = 1.0f;
               } else if (page == 1) {
                 // Light page: toggle lights on/off
@@ -377,7 +376,7 @@ binary_sensor:
               auto page = id(lv_active_page);
               if (page == 0) {
                 // Temp page: turn off
-                id(heat_mode_dirty) = true;
+                id(last_heater_interaction_ms) = millis();
                 id(local_heat_mode) = 0.0f;
               }
 
@@ -426,7 +425,7 @@ script:
                 return std::string("AT TARGET");
               return std::string("HEATING");
             }
-            return std::string("STANDBY");
+            return std::string("IDLE");
 
   - id: update_light_selection
     then:
@@ -480,10 +479,6 @@ interval:
           bool is_up = (id(last_rx_ms) > 0) && (millis() - id(last_rx_ms) < ${link_timeout_ms});
           id(link_up) = is_up;
           if (!was_up && is_up) {
-            id(target_temp_dirty) = false;
-            id(heat_mode_dirty) = false;
-            id(brightness_dirty) = false;
-            id(light_color_dirty) = false;
             id(synced) = false;
           }
       - if:

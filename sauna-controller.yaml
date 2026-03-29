@@ -325,8 +325,11 @@ sensor:
         - lambda: |-
             if (std::isnan(x)) return;
             float b = std::max(0.0f, std::min(x, 1.0f));
+            if (id(sauna_light).current_values.is_on() &&
+                abs(b - id(sauna_light).current_values.get_brightness()) < 0.01f) return;
             auto call = id(sauna_light).make_call();
             call.set_brightness(b);
+            call.set_transition_length(0);
             call.perform();
 
   - platform: packet_transport
@@ -592,14 +595,20 @@ interval:
       - lambda: |-
           if (!id(light_apply_pending)) return;
           id(light_apply_pending) = false;
+          // Dedup: skip if already at target
+          auto cv = id(sauna_light).current_values;
+          if (cv.is_on() &&
+              abs(cv.get_red() - id(staged_light_r)) < 0.01f &&
+              abs(cv.get_green() - id(staged_light_g)) < 0.01f &&
+              abs(cv.get_blue() - id(staged_light_b)) < 0.01f &&
+              abs(cv.get_white() - id(staged_light_w)) < 0.01f) return;
           auto call = id(sauna_light).make_call();
           call.set_red(id(staged_light_r));
           call.set_green(id(staged_light_g));
           call.set_blue(id(staged_light_b));
           call.set_white(id(staged_light_w));
+          call.set_transition_length(0);
           call.perform();
-          ESP_LOGI("panel", "RGBW applied: R=%.2f G=%.2f B=%.2f W=%.2f",
-                   id(staged_light_r), id(staged_light_g), id(staged_light_b), id(staged_light_w));
 
 ################### FAULT REPORTING ###################
 
@@ -621,7 +630,7 @@ uart:
 packet_transport:
   - platform: uart
     uart_id: panel_uart
-    update_interval: 500ms
+    update_interval: 150ms
     sensors:
       - ceiling_temp_c
       - bench_temp_c

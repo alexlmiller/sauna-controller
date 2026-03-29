@@ -9,7 +9,7 @@ substitutions:
   link_timeout_ms: "30000"
 
 packages:
-  common: !include sauna-panel-common.yaml
+  common: !include packages/sauna-panel-common.yaml
 
 api:
   encryption:
@@ -53,15 +53,9 @@ sensor:
         - lambda: |-
             id(last_rx_ms) = millis();
             if (!id(synced)) id(synced) = true;
-            if (id(target_temp_dirty) && abs(x - id(local_target_temp)) < 1.5f) {
-              id(target_temp_dirty) = false;
-            }
-            if (!id(target_temp_dirty)) {
+            if (millis() - id(last_heater_interaction_ms) > 2000) {
               id(local_target_temp) = x;
             }
-        - lvgl.label.update:
-            id: lbl_target_temp
-            text: !lambda 'return str_sprintf("%.0f°F", x);'
 
   - platform: homeassistant
     id: light_brightness_ha
@@ -72,10 +66,7 @@ sensor:
         - lambda: |-
             id(last_rx_ms) = millis();
             float norm = x / 255.0f;
-            if (id(brightness_dirty) && abs(norm - id(local_brightness)) < 0.03f) {
-              id(brightness_dirty) = false;
-            }
-            if (!id(brightness_dirty)) {
+            if (millis() - id(last_brightness_interaction_ms) > 2000) {
               id(local_brightness) = norm;
               lv_arc_set_value(id(arc_brightness), (int)(norm * 100.0f));
             }
@@ -167,10 +158,7 @@ text_sensor:
             if (!id(synced)) id(synced) = true;
             bool is_heat = (x == "heat");
             float controller_val = is_heat ? 1.0f : 0.0f;
-            if (id(heat_mode_dirty) && abs(controller_val - id(local_heat_mode)) < 0.1f) {
-              id(heat_mode_dirty) = false;
-            }
-            if (!id(heat_mode_dirty)) {
+            if (millis() - id(last_heater_interaction_ms) > 2000) {
               id(local_heat_mode) = controller_val;
             }
         - script.execute: update_status_ring
@@ -224,7 +212,7 @@ interval:
     then:
       - if:
           condition:
-            lambda: 'return id(target_temp_dirty);'
+            lambda: 'return millis() - id(last_heater_interaction_ms) < 2000;'
           then:
             - homeassistant.service:
                 service: climate.set_temperature
@@ -237,7 +225,7 @@ interval:
                     return id(local_target_temp);
       - if:
           condition:
-            lambda: 'return id(heat_mode_dirty);'
+            lambda: 'return millis() - id(last_heater_interaction_ms) < 2000;'
           then:
             - homeassistant.service:
                 service: climate.set_hvac_mode
@@ -251,7 +239,7 @@ interval:
                     return std::string("off");
       - if:
           condition:
-            lambda: 'return id(brightness_dirty);'
+            lambda: 'return millis() - id(last_brightness_interaction_ms) < 2000;'
           then:
             - homeassistant.service:
                 service: light.turn_on
