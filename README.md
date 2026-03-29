@@ -11,7 +11,7 @@ Safeties include
 - **Door safety** (instant off + timeout fault)
 - Strong fault model (latching) + optional **contactor auxiliary feedback** + **high-limit status** sensing
 
-While the ESP handles the actual control of the sauna, currently all input is done via Home Assistant - in the future I'll add a physical hardware controller based on a second ESP Board + TFT Display + rotary encoder that can be installed at the door of the sauna.
+The ESP handles the actual control of the sauna. Input can come from Home Assistant or from a dedicated **wall-mounted panel** (CrowPanel 2.1" round display with rotary encoder) installed at the sauna door, connected via wired RS-485 or WiFi.
 
 > ⚠️ **Electrical safety**: This project switches lethal voltages. Get a licensed electrician/PE to review & install. Use appropriately rated components and follow local code.
 
@@ -134,19 +134,94 @@ The other big cost is that various DIN rail parts - I chose to use DIN rail comp
 - **GPIO13** Coil MOSFET SIG
 - **GPIO16/17/18/19** RGBW MOSFET SIG (R/G/B/W)
 
+**Panel UART (RS-485)**
+- **GPIO14** TX to panel
+- **GPIO4** RX from panel
+
 **Reserved**
-- **GPIO25/26** reserved for future RS-485
 - **GPIO0/2/12/15** NC (boot straps)
 - **GPIO1/3** UART (leave free)
   
 ---
 
 ## Software & UI
-The actual control software runs entirely on the ESP32, the UI is via Home Assistant - in the future I'm likely to build a physical controller for it as well
+The control software runs entirely on the ESP32. Input comes from Home Assistant and/or the wall panel.
 
 ### HA Device Page
 <img width="723" height="761" alt="Home Assistant" src="https://github.com/user-attachments/assets/819bb462-3065-4353-bc77-227a327b023d" />
 
-
 ### Phone Dashboard
 <img width="606" height="767" alt="Dashboared" src="https://github.com/user-attachments/assets/f103d0ee-843a-4577-ad8f-8157f9dca8a7" />
+
+---
+
+## Wall Panel
+
+A dedicated physical controller using the **Elecrow CrowPanel 2.1" Rotary Display** — a round 480x480 IPS touchscreen with a built-in rotary encoder, powered by an ESP32-S3.
+
+The panel provides full local control of the sauna without needing a phone or WiFi for basic operation (when using wired RS-485). WiFi is available for OTA updates and as an alternative transport during development.
+
+### Hardware
+- **Display**: Elecrow CrowPanel 2.1" (ESP32-S3-R8, ST7701S 480x480 round IPS, CST826 capacitive touch)
+- **Input**: Built-in rotary encoder with push button (via PCF8574 I/O expander)
+- **Communication**: SP3485 RS-485 transceivers (3.3V) over Cat5e, or WiFi via Home Assistant API
+- **Power**: 5V from existing DDR-15G-5 supply via Cat5e
+
+### UI Design
+Nest thermostat-inspired dark theme with a bold colored ring as the primary visual element. Three pages:
+
+**Heater Page**
+- Large temperature display (96px light-weight Montserrat)
+- Colored ring shows heater state: gray (off), blue (standby), orange (heating), green (at target), red (fault)
+- Target temperature and status text below
+
+**Lights Page**
+- Ring shows brightness level, color matches the active light preset
+- 4 color preset circles in a 2x2 grid: White (4500K), Warm (2700K), Red, Green
+- Tap a circle to activate that preset
+
+**Status Page**
+- Ceiling and bench temperature readouts
+- Door, heater, hi-limit, and aux contact status (color-coded)
+- Clear fault button (visible only when faulted)
+
+### Interaction Model
+| Input | Heater Page | Lights Page |
+|-------|------------|-------------|
+| **Encoder rotate** | Adjust target temp (pending) | Adjust brightness (live) |
+| **Encoder click** | Set target + turn on | Toggle lights on/off |
+| **Encoder long press** | Turn heater off | — |
+| **Tap ring gap** | Next page | Next page |
+| **Tap preset circle** | — | Activate color preset |
+
+### Firmware Architecture
+The panel firmware is split into three files using ESPHome's `packages:` system:
+
+| File | Purpose |
+|------|---------|
+| `sauna-panel-common.yaml` | Shared UI, hardware config, encoder logic, LVGL pages, fonts, scripts |
+| `sauna-panel-wifi.yaml` | WiFi transport — subscribes to controller entities via HA API, sends commands via HA service calls |
+| `sauna-panel-wired.yaml` | Wired transport — UART packet_transport over RS-485, template command sensors |
+
+The UI and interaction logic are identical regardless of transport. Only the data source and command mechanism differ.
+
+### Building & Flashing
+
+```bash
+# WiFi version (for desk testing via Home Assistant)
+esphome run sauna-panel-wifi.yaml
+
+# Wired version (for production install via RS-485)
+esphome run sauna-panel-wired.yaml
+```
+
+Both require a `secrets.yaml` with `wifi_ssid`, `wifi_password`, `ota_password`, and `api_key` (WiFi version only).
+
+### Panel Wiring (Wired Mode)
+- **Cat5e** from controller box to panel location (~5 ft)
+- **SP3485** 3.3V RS-485 transceivers on both ends (DE/RE tied for full-duplex)
+- **5V power** pulled from the existing DDR-15G-5 supply over spare Cat5e pairs
+- **Controller UART**: GPIO14 (TX) / GPIO4 (RX)
+- **Panel UART**: GPIO43 (TX) / GPIO44 (RX) — requires `logger: baud_rate: 0`
+
+See `PANEL-REQUIREMENTS.md` for the full design specification including transport protocol details, command semantics, and safety architecture.
