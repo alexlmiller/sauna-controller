@@ -17,6 +17,23 @@ logger:
   level: INFO
   baud_rate: 0
 
+# Required for syslog
+time:
+  - platform: homeassistant
+    id: ha_time
+
+# Required for syslog - UDP client
+udp:
+  id: syslog_udp
+  addresses: !secret syslog_host
+
+# Remote syslog to VictoriaLogs via Alloy
+syslog:
+  udp_id: syslog_udp
+  port: 5515
+  level: INFO
+  strip: true
+
 ota:
   platform: esphome
   password: !secret ota_password

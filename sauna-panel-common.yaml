@@ -1,12 +1,12 @@
 ###############################################################################
-# Sauna Panel — CrowPanel 2.1" Rotary Display
-# Wall-mounted HMI for sauna controller. All control over wired UART/RS-485.
-# WiFi enabled for OTA updates only — no HA API, no cloud.
+# Sauna Panel — CrowPanel 2.1" Common Config
+# Shared UI, hardware, and interaction logic.
+# Import this via packages: from sauna-panel-wifi.yaml or sauna-panel-wired.yaml
 ###############################################################################
 
 esphome:
-  name: sauna-panel
-  friendly_name: Sauna Panel
+  name: ${device_name}
+  friendly_name: ${friendly_name}
   platformio_options:
     build_flags: "-DBOARD_HAS_PSRAM"
     board_build.esp-idf.memory_type: qio_opi
@@ -53,10 +53,6 @@ wifi:
 ota:
   platform: esphome
   password: !secret ota_password
-
-api:
-  encryption:
-    key: !secret api_key
 
 ############### GLOBALS ###############
 globals:
@@ -133,6 +129,25 @@ globals:
     type: uint32_t
     initial_value: "0x555555"
 
+  # Transport-agnostic state mirrors
+  - id: fault_active
+    type: bool
+    initial_value: "false"
+  - id: heater_running
+    type: bool
+    initial_value: "false"
+
+  # Transport-agnostic command flags
+  - id: light_toggle_pending
+    type: bool
+    initial_value: "false"
+  - id: clear_fault_pending
+    type: bool
+    initial_value: "false"
+  - id: preset_pending
+    type: int
+    initial_value: "-1"
+
   # Light ring color (matches active preset)
   - id: light_ring_color
     type: uint32_t
@@ -202,7 +217,7 @@ touchscreen:
   id: panel_touch
   i2c_id: bus_a
   skip_probe: true
-  update_interval: 25ms
+  update_interval: 50ms
   address: 0x15
 
 display:
@@ -230,7 +245,7 @@ display:
     vsync_front_porch: 8
     vsync_pulse_width: 10
     vsync_back_porch: 10
-    pclk_frequency: 18MHz
+    pclk_frequency: 21MHz
     pclk_inverted: true
     init_sequence:
       - [0x01]
@@ -272,9 +287,6 @@ display:
       - [0x29]
       - delay 50ms
 
-############### WIFI TRANSPORT (via Home Assistant) ###############
-# Panel subscribes to controller entities via HA native API.
-# Entity IDs assume controller device name "sauna-controller".
 
 ############### ROTARY ENCODER ###############
 
@@ -320,111 +332,6 @@ sensor:
               }
             }
 
-  ############### CONSUMED SENSOR DATA ###############
-
-  ############### CONSUMED DATA (via Home Assistant) ###############
-
-  # Ceiling temp
-  - platform: homeassistant
-    id: ceiling_temp_c
-    entity_id: sensor.sauna_controller_ceiling_temp
-    on_value:
-      then:
-        - lambda: 'id(last_rx_ms) = millis();'
-        - lvgl.label.update:
-            id: lbl_current_temp
-            text: !lambda |-
-              return str_sprintf("%.0f°", x);
-        - lvgl.label.update:
-            id: lbl_info_ceiling
-            text: !lambda |-
-              return str_sprintf("Ceiling  %.0f°F", x);
-        - script.execute: update_status_ring
-
-  # Bench temp
-  - platform: homeassistant
-    id: bench_temp_c
-    entity_id: sensor.sauna_controller_bench_temp
-    on_value:
-      then:
-        - lambda: 'id(last_rx_ms) = millis();'
-        - lvgl.label.update:
-            id: lbl_info_bench
-            text: !lambda |-
-              return str_sprintf("Bench    %.0f°F", x);
-
-  # Target temp (from climate entity attribute)
-  - platform: homeassistant
-    id: target_temp_current
-    entity_id: climate.sauna_heater
-    attribute: temperature
-    on_value:
-      then:
-        - lambda: |-
-            id(last_rx_ms) = millis();
-            if (!id(synced)) {
-              id(synced) = true;
-            }
-            if (id(target_temp_dirty) && abs(x - id(local_target_temp)) < 1.5f) {
-              id(target_temp_dirty) = false;
-            }
-            if (!id(target_temp_dirty)) {
-              id(local_target_temp) = x;
-            }
-        - lvgl.label.update:
-            id: lbl_target_temp
-            text: !lambda |-
-              return str_sprintf("%.0f°F", x);
-
-  # Light brightness (0-255 from HA, normalize to 0-1)
-  - platform: homeassistant
-    id: light_brightness_ha
-    entity_id: light.sauna_interior_leds
-    attribute: brightness
-    on_value:
-      then:
-        - lambda: |-
-            id(last_rx_ms) = millis();
-            float norm = x / 255.0f;
-            if (id(brightness_dirty) && abs(norm - id(local_brightness)) < 0.02f) {
-              id(brightness_dirty) = false;
-            }
-            if (!id(brightness_dirty)) {
-              id(local_brightness) = norm;
-            }
-        - lvgl.arc.update:
-            id: arc_brightness
-            value: !lambda 'return (int)(x / 2.55f);'
-
-  # Light color — track HS hue to update ring color
-  - platform: homeassistant
-    id: light_hue
-    entity_id: light.sauna_interior_leds
-    attribute: hs_color
-    on_value:
-      then:
-        - lambda: |-
-            // hs_color arrives as hue (0-360). Map to nearest preset ring color.
-            // x is the hue value from HA
-            float hue = x;
-            uint32_t color;
-            if (hue < 30 || hue > 340) {
-              color = 0xFF6347;   // RED (hue ~0/360)
-            } else if (hue < 60) {
-              color = 0xFFB366;   // WARM (hue ~30-50)
-            } else if (hue < 170) {
-              color = 0x006400;   // GREEN (hue ~120)
-            } else if (hue < 250) {
-              color = 0xFFFFFF;   // WHITE (cool temps map here)
-            } else {
-              color = 0xFF6347;   // RED-ish
-            }
-            id(light_ring_color) = color;
-        - lvgl.arc.update:
-            id: arc_brightness
-            indicator:
-              arc_color: !lambda 'return lv_color_hex(id(light_ring_color));'
-
 binary_sensor:
   - platform: gpio
     id: encoder_button
@@ -448,25 +355,11 @@ binary_sensor:
                 id(local_heat_mode) = 1.0f;
               } else if (page == 1) {
                 // Light page: toggle lights on/off
+                id(light_toggle_pending) = true;
               } else if (page == 2) {
                 // Info page: clear fault
+                id(clear_fault_pending) = true;
               }
-          - if:
-              condition:
-                lambda: 'return id(lv_active_page) == 1;'
-              then:
-                - homeassistant.service:
-                    service: light.toggle
-                    data:
-                      entity_id: light.sauna_interior_leds
-          - if:
-              condition:
-                lambda: 'return id(lv_active_page) == 2;'
-              then:
-                - homeassistant.service:
-                    service: button.press
-                    data:
-                      entity_id: button.sauna_controller_clear_fault
       - timing:
           - ON for at least 700ms
         then:
@@ -479,102 +372,7 @@ binary_sensor:
                 id(local_heat_mode) = 0.0f;
               }
 
-############### CONSUMED STATUS DATA (via Home Assistant) ###############
-
-  # Door sensor
-  - platform: homeassistant
-    id: door_sensor
-    entity_id: binary_sensor.sauna_controller_sauna_door
-    on_state:
-      then:
-        - lambda: 'id(last_rx_ms) = millis();'
-        - lvgl.label.update:
-            id: lbl_info_door
-            text: !lambda 'return x ? std::string("Door     OPEN") : std::string("Door     CLOSED");'
-            text_color: !lambda 'return x ? lv_color_hex(0xFF6B00) : lv_color_hex(0x00CC66);'
-
-  # Contactor aux
-  - platform: homeassistant
-    id: contactor_aux_closed
-    entity_id: binary_sensor.sauna_controller_contactor_aux_closed
-    on_state:
-      then:
-        - lambda: 'id(last_rx_ms) = millis();'
-        - script.execute: update_status_ring
-        - lvgl.label.update:
-            id: lbl_info_aux
-            text: !lambda 'return x ? std::string("Aux      ON") : std::string("Aux      OFF");'
-            text_color: !lambda 'return x ? lv_color_hex(0x00CC66) : lv_color_hex(0x888888);'
-
-  # High-limit trip
-  - platform: homeassistant
-    id: high_limit_trip
-    entity_id: binary_sensor.sauna_controller_high_limit_trip
-    on_state:
-      then:
-        - lambda: 'id(last_rx_ms) = millis();'
-        - lvgl.label.update:
-            id: lbl_info_hilimit
-            text: !lambda 'return x ? std::string("Hi-Limit TRIP") : std::string("Hi-Limit OK");'
-            text_color: !lambda 'return x ? lv_color_hex(0xFF0000) : lv_color_hex(0x00CC66);'
-
-  # Heat mode — derived from climate entity state
-  - platform: homeassistant
-    id: heat_mode_active
-    entity_id: climate.sauna_heater
-    attribute: hvac_action
-    on_state:
-      then:
-        - lambda: |-
-            id(last_rx_ms) = millis();
-            // hvac_action: "heating", "idle", "off"
-            bool is_heat = id(sauna_climate_mode).state == "heat";
-            float controller_val = is_heat ? 1.0f : 0.0f;
-            if (id(heat_mode_dirty) && abs(controller_val - id(local_heat_mode)) < 0.1f) {
-              id(heat_mode_dirty) = false;
-            }
-            if (!id(heat_mode_dirty)) {
-              id(local_heat_mode) = controller_val;
-            }
-        - script.execute: update_status_ring
-        - lvgl.label.update:
-            id: lbl_info_heater
-            text: !lambda |-
-              return id(sauna_climate_mode).state == "heat" ?
-                std::string("Heater   HEAT") : std::string("Heater   OFF");
-            text_color: !lambda |-
-              return id(sauna_climate_mode).state == "heat" ?
-                lv_color_hex(0xFF6B00) : lv_color_hex(0x888888);
-
-text_sensor:
-  # Climate mode (heat/off)
-  - platform: homeassistant
-    id: sauna_climate_mode
-    entity_id: climate.sauna_heater
-    on_value:
-      then:
-        - lambda: |-
-            id(last_rx_ms) = millis();
-            if (!id(synced)) id(synced) = true;
-
-  # Fault — derived from last trip reason (non-empty = faulted)
-  - platform: homeassistant
-    id: last_trip_reason
-    entity_id: text_sensor.sauna_controller_last_trip_reason
-    on_value:
-      then:
-        - lambda: 'id(last_rx_ms) = millis();'
-        - if:
-            condition:
-              lambda: 'return x.length() > 0;'
-            then:
-              - lvgl.widget.show: fault_banner
-              - lvgl.label.update:
-                  id: lbl_fault_text
-                  text: !lambda 'return x;'
-            else:
-              - lvgl.widget.hide: fault_banner
-        - script.execute: update_status_ring
+  # Transport-specific sensors are added by sauna-panel-wifi.yaml or sauna-panel-wired.yaml
 
 ############### SCRIPTS ###############
 
@@ -583,20 +381,16 @@ script:
     then:
       - lambda: |-
           uint32_t color;
-          if (id(last_trip_reason).state.length() > 0) {
+          if (id(fault_active)) {
             color = 0xFF0000;      // Fault — red
-          } else if (id(sauna_climate_mode).state != "heat") {
-            color = 0x555555;      // Heat off — blue
-          } else if (id(contactor_aux_closed).state) {
-            float current_f = id(ceiling_temp_c).state;
-            float target_f = id(target_temp_current).state;
-            if (abs(current_f - target_f) <= 2.0) {
-              color = 0x00CC66;    // At target — green
-            } else {
-              color = 0xFF6B00;    // Heating — orange
-            }
+          } else if (id(local_heat_mode) < 0.5f) {
+            color = 0x555555;      // Heat off — gray
+          } else if (id(heater_running)) {
+            float current_f = id(local_target_temp);  // both stored in display units
+            // approximate "at target" — will refine when real data flows
+            color = 0xFF6B00;      // Heating — orange
           } else {
-            color = 0x3366AA;      // Idle within heat mode — muted blue
+            color = 0x3366AA;      // Standby — muted blue
           }
           id(status_ring_color) = color;
       - lvgl.arc.update:
@@ -607,14 +401,9 @@ script:
           id: lbl_status
           text_color: !lambda 'return lv_color_hex(id(status_ring_color));'
           text: !lambda |-
-            if (id(last_trip_reason).state.length() > 0) return std::string("FAULT");
-            if (id(sauna_climate_mode).state != "heat") return std::string("OFF");
-            if (id(contactor_aux_closed).state) {
-              float cf = id(ceiling_temp_c).state;
-              float tf = id(target_temp_current).state;
-              if (abs(cf - tf) <= 2.0) return std::string("AT TARGET");
-              return std::string("HEATING");
-            }
+            if (id(fault_active)) return std::string("FAULT");
+            if (id(local_heat_mode) < 0.5f) return std::string("OFF");
+            if (id(heater_running)) return std::string("HEATING");
             return std::string("STANDBY");
 
   - id: update_light_ring
@@ -624,7 +413,7 @@ script:
           switch(id(active_preset)) {
             case 0: color = 0xFFFFFF; break;  // WHITE
             case 1: color = 0xFFB366; break;  // WARM
-            case 2: color = 0xFF6347; break;  // RED
+            case 2: color = 0x8B0000; break;  // RED
             case 3: color = 0x006400; break;  // GREEN
             default: color = 0xFF6B00; break; // default orange
           }
@@ -682,67 +471,7 @@ interval:
             - lvgl.label.update:
                 id: lbl_brightness_pct
                 text: !lambda 'return str_sprintf("%d%%", (int)(id(local_brightness) * 100.0f));'
-      # Send pending commands to controller via HA
-      - if:
-          condition:
-            lambda: 'return id(target_temp_dirty);'
-          then:
-            - homeassistant.service:
-                service: climate.set_temperature
-                data:
-                  entity_id: climate.sauna_heater
-                data_template:
-                  temperature: "{{ target_val }}"
-                variables:
-                  target_val: |-
-                    return id(local_target_temp);
-      - if:
-          condition:
-            lambda: 'return id(heat_mode_dirty);'
-          then:
-            - homeassistant.service:
-                service: climate.set_hvac_mode
-                data:
-                  entity_id: climate.sauna_heater
-                data_template:
-                  hvac_mode: "{{ mode_val }}"
-                variables:
-                  mode_val: |-
-                    if (id(local_heat_mode) >= 0.5f) return std::string("heat");
-                    return std::string("off");
-      - if:
-          condition:
-            lambda: 'return id(brightness_dirty);'
-          then:
-            - homeassistant.service:
-                service: light.turn_on
-                data:
-                  entity_id: light.sauna_interior_leds
-                data_template:
-                  brightness: "{{ bri_val }}"
-                variables:
-                  bri_val: |-
-                    return (int)(id(local_brightness) * 255.0f);
-      - if:
-          condition:
-            lambda: 'return id(light_color_dirty);'
-          then:
-            - homeassistant.service:
-                service: light.turn_on
-                data:
-                  entity_id: light.sauna_interior_leds
-                data_template:
-                  rgbw_color: "[{{ r }}, {{ g }}, {{ b }}, {{ w }}]"
-                variables:
-                  r: |-
-                    return (int)(id(local_light_r) * 255.0f);
-                  g: |-
-                    return (int)(id(local_light_g) * 255.0f);
-                  b: |-
-                    return (int)(id(local_light_b) * 255.0f);
-                  w: |-
-                    return (int)(id(local_light_w) * 255.0f);
-            - lambda: 'id(light_color_dirty) = false;'
+      # Command sending is handled by transport-specific file (wifi or wired)
 
 ############### FONTS ###############
 
@@ -775,7 +504,7 @@ lvgl:
       enter_button: encoder_button
       sensor: panel_encoder
   color_depth: 16
-  buffer_size: 50%
+  buffer_size: 100%
   page_wrap: true
 
 
@@ -793,18 +522,6 @@ lvgl:
       bg_color: 0x111118
       bg_opa: COVER
       widgets:
-        - obj:
-            width: 480
-            height: 480
-            bg_opa: TRANSP
-            border_width: 0
-            on_click:
-              then:
-                - lambda: 'id(lv_active_page) = (id(lv_active_page) + 1) % 3;'
-                - lvgl.page.next:
-                    animation: FADE_IN
-                    time: 200ms
-
         # Ring
         - arc:
             id: arc_status_ring
@@ -814,8 +531,8 @@ lvgl:
             x: 2
             y: 9
             adjustable: false
-            start_angle: 0
-            end_angle: 360
+            start_angle: 135
+            end_angle: 45
             value: 100
             min_value: 0
             max_value: 100
@@ -824,6 +541,14 @@ lvgl:
             indicator:
               arc_width: 36
               arc_color: 0x555555
+
+        # Page title
+        - label:
+            align: CENTER
+            y: -115
+            text: "HEATER"
+            text_font: font_body
+            text_color: 0x555555
 
         # Temperature
         - label:
@@ -862,9 +587,6 @@ lvgl:
             bg_color: 0xDD2222
             bg_opa: COVER
             radius: 24
-            shadow_width: 30
-            shadow_color: 0xFF0000
-            shadow_opa: 20%
             hidden: true
             widgets:
               - label:
@@ -884,37 +606,51 @@ lvgl:
             text_color: 0xFF5555
             hidden: true
 
-        # Page dots
+        # Page nav — tap zone in ring gap at bottom
         - obj:
-            align: CENTER
-            x: -10
-            y: 145
-            width: 7
-            height: 7
-            radius: 4
-            bg_color: 0x999999
-            bg_opa: COVER
+            align: BOTTOM_MID
+            y: -15
+            width: 160
+            height: 60
+            bg_opa: TRANSP
             border_width: 0
-        - obj:
-            align: CENTER
-            x: 2
-            y: 145
-            width: 5
-            height: 5
-            radius: 3
-            bg_color: 0x444444
-            bg_opa: COVER
-            border_width: 0
-        - obj:
-            align: CENTER
-            x: 12
-            y: 145
-            width: 5
-            height: 5
-            radius: 3
-            bg_color: 0x444444
-            bg_opa: COVER
-            border_width: 0
+            on_click:
+              then:
+                - lambda: 'id(lv_active_page) = (id(lv_active_page) + 1) % 3;'
+                - lvgl.page.next:
+                    animation: FADE_IN
+                    time: 150ms
+            widgets:
+              - obj:
+                  align: CENTER
+                  x: -10
+                  y: 0
+                  width: 7
+                  height: 7
+                  radius: 4
+                  bg_color: 0x999999
+                  bg_opa: COVER
+                  border_width: 0
+              - obj:
+                  align: CENTER
+                  x: 2
+                  y: 0
+                  width: 5
+                  height: 5
+                  radius: 3
+                  bg_color: 0x444444
+                  bg_opa: COVER
+                  border_width: 0
+              - obj:
+                  align: CENTER
+                  x: 12
+                  y: 0
+                  width: 5
+                  height: 5
+                  radius: 3
+                  bg_color: 0x444444
+                  bg_opa: COVER
+                  border_width: 0
 
     ###########################################################
     # LIGHTING — 2x2 color circles
@@ -923,18 +659,6 @@ lvgl:
       bg_color: 0x111118
       bg_opa: COVER
       widgets:
-        - obj:
-            width: 480
-            height: 480
-            bg_opa: TRANSP
-            border_width: 0
-            on_click:
-              then:
-                - lambda: 'id(lv_active_page) = (id(lv_active_page) + 1) % 3;'
-                - lvgl.page.next:
-                    animation: FADE_IN
-                    time: 200ms
-
         # Brightness ring
         - arc:
             id: arc_brightness
@@ -955,6 +679,14 @@ lvgl:
               arc_width: 36
               arc_color: 0xFF6B00
 
+        # Page title
+        - label:
+            align: CENTER
+            y: -115
+            text: "LIGHTS"
+            text_font: font_body
+            text_color: 0x555555
+
         # Hidden brightness label for data binding
         - label:
             id: lbl_brightness_pct
@@ -971,30 +703,20 @@ lvgl:
             id: btn_preset_warm
             align: CENTER
             x: -55
-            y: -70
+            y: -55
             width: 70
             height: 70
             radius: 35
             bg_color: 0xFFFFFF
             border_width: 0
-            shadow_width: 16
-            shadow_color: 0xFFFFFF
-            shadow_opa: 20%
             on_click:
               then:
-                - lambda: 'id(active_preset) = 0;'
-                - homeassistant.service:
-                    service: light.turn_on
-                    data:
-                      entity_id: light.sauna_interior_leds
-                      color_temp_kelvin: "4500"
-                      brightness: "200"
-                      transition: "1"
+                - lambda: 'id(active_preset) = 0; id(preset_pending) = 0;'
                 - script.execute: update_light_ring
         - label:
             align: CENTER
             x: -55
-            y: -15
+            y: 0
             text: "WHITE"
             text_font: font_body
             text_color: 0x777777
@@ -1004,30 +726,20 @@ lvgl:
             id: btn_preset_sunset
             align: CENTER
             x: 55
-            y: -70
+            y: -55
             width: 70
             height: 70
             radius: 35
             bg_color: 0xFFB366
             border_width: 0
-            shadow_width: 16
-            shadow_color: 0xFFB366
-            shadow_opa: 25%
             on_click:
               then:
-                - lambda: 'id(active_preset) = 1;'
-                - homeassistant.service:
-                    service: light.turn_on
-                    data:
-                      entity_id: light.sauna_interior_leds
-                      color_temp_kelvin: "2700"
-                      brightness: "200"
-                      transition: "1"
+                - lambda: 'id(active_preset) = 1; id(preset_pending) = 1;'
                 - script.execute: update_light_ring
         - label:
             align: CENTER
             x: 55
-            y: -15
+            y: 0
             text: "WARM"
             text_font: font_body
             text_color: 0x777777
@@ -1037,31 +749,20 @@ lvgl:
             id: btn_preset_red
             align: CENTER
             x: -55
-            y: 45
+            y: 60
             width: 70
             height: 70
             radius: 35
-            bg_color: 0xFF6347
+            bg_color: 0x8B0000
             border_width: 0
-            shadow_width: 16
-            shadow_color: 0xFF6347
-            shadow_opa: 25%
             on_click:
               then:
-                - lambda: 'id(active_preset) = 2;'
-                - homeassistant.service:
-                    service: light.turn_on
-                    data:
-                      entity_id: light.sauna_interior_leds
-                    data_template:
-                      rgbw_color: "[255, 80, 40, 60]"
-                      brightness: "255"
-                      transition: "1"
+                - lambda: 'id(active_preset) = 2; id(preset_pending) = 2;'
                 - script.execute: update_light_ring
         - label:
             align: CENTER
             x: -55
-            y: 100
+            y: 115
             text: "RED"
             text_font: font_body
             text_color: 0x777777
@@ -1071,66 +772,70 @@ lvgl:
             id: btn_preset_blue
             align: CENTER
             x: 55
-            y: 45
+            y: 60
             width: 70
             height: 70
             radius: 35
             bg_color: 0x006400
             border_width: 0
-            shadow_width: 16
-            shadow_color: 0x006400
-            shadow_opa: 30%
             on_click:
               then:
-                - lambda: 'id(active_preset) = 3;'
-                - homeassistant.service:
-                    service: light.turn_on
-                    data:
-                      entity_id: light.sauna_interior_leds
-                    data_template:
-                      rgb_color: "[0, 100, 0]"
-                      brightness: "255"
-                      transition: "1"
+                - lambda: 'id(active_preset) = 3; id(preset_pending) = 3;'
                 - script.execute: update_light_ring
         - label:
             align: CENTER
             x: 55
-            y: 100
+            y: 115
             text: "GREEN"
             text_font: font_body
             text_color: 0x777777
 
         # Page dots
+        # Page nav — tap zone in ring gap at bottom
         - obj:
-            align: CENTER
-            x: -10
-            y: 155
-            width: 5
-            height: 5
-            radius: 3
-            bg_color: 0x444444
-            bg_opa: COVER
+            align: BOTTOM_MID
+            y: -15
+            width: 160
+            height: 60
+            bg_opa: TRANSP
             border_width: 0
-        - obj:
-            align: CENTER
-            x: 2
-            y: 155
-            width: 7
-            height: 7
-            radius: 4
-            bg_color: 0x999999
-            bg_opa: COVER
-            border_width: 0
-        - obj:
-            align: CENTER
-            x: 12
-            y: 155
-            width: 5
-            height: 5
-            radius: 3
-            bg_color: 0x444444
-            bg_opa: COVER
-            border_width: 0
+            on_click:
+              then:
+                - lambda: 'id(lv_active_page) = (id(lv_active_page) + 1) % 3;'
+                - lvgl.page.next:
+                    animation: FADE_IN
+                    time: 150ms
+            widgets:
+              - obj:
+                  align: CENTER
+                  x: -10
+                  y: 0
+                  width: 5
+                  height: 5
+                  radius: 3
+                  bg_color: 0x444444
+                  bg_opa: COVER
+                  border_width: 0
+              - obj:
+                  align: CENTER
+                  x: 2
+                  y: 0
+                  width: 7
+                  height: 7
+                  radius: 4
+                  bg_color: 0x999999
+                  bg_opa: COVER
+                  border_width: 0
+              - obj:
+                  align: CENTER
+                  x: 12
+                  y: 0
+                  width: 5
+                  height: 5
+                  radius: 3
+                  bg_color: 0x444444
+                  bg_opa: COVER
+                  border_width: 0
 
     ###########################################################
     # STATUS
@@ -1139,18 +844,6 @@ lvgl:
       bg_color: 0x111118
       bg_opa: COVER
       widgets:
-        - obj:
-            width: 480
-            height: 480
-            bg_opa: TRANSP
-            border_width: 0
-            on_click:
-              then:
-                - lambda: 'id(lv_active_page) = (id(lv_active_page) + 1) % 3;'
-                - lvgl.page.next:
-                    animation: FADE_IN
-                    time: 200ms
-
         - label:
             align: TOP_MID
             y: 85
@@ -1230,10 +923,7 @@ lvgl:
             group: main_group
             on_click:
               then:
-                - homeassistant.service:
-                    service: button.press
-                    data:
-                      entity_id: button.sauna_controller_clear_fault
+                - lambda: 'id(clear_fault_pending) = true;'
             widgets:
               - label:
                   align: CENTER
@@ -1242,33 +932,48 @@ lvgl:
                   text_color: 0xFFFFFF
 
         # Page dots
+        # Page nav — tap zone at bottom
         - obj:
-            align: CENTER
-            x: -10
-            y: 155
-            width: 5
-            height: 5
-            radius: 3
-            bg_color: 0x444444
-            bg_opa: COVER
+            align: BOTTOM_MID
+            y: -15
+            width: 160
+            height: 60
+            bg_opa: TRANSP
             border_width: 0
-        - obj:
-            align: CENTER
-            x: 2
-            y: 155
-            width: 5
-            height: 5
-            radius: 3
-            bg_color: 0x444444
-            bg_opa: COVER
-            border_width: 0
-        - obj:
-            align: CENTER
-            x: 12
-            y: 155
-            width: 7
-            height: 7
-            radius: 4
-            bg_color: 0x999999
-            bg_opa: COVER
-            border_width: 0
+            on_click:
+              then:
+                - lambda: 'id(lv_active_page) = (id(lv_active_page) + 1) % 3;'
+                - lvgl.page.next:
+                    animation: FADE_IN
+                    time: 150ms
+            widgets:
+              - obj:
+                  align: CENTER
+                  x: -10
+                  y: 0
+                  width: 5
+                  height: 5
+                  radius: 3
+                  bg_color: 0x444444
+                  bg_opa: COVER
+                  border_width: 0
+              - obj:
+                  align: CENTER
+                  x: 2
+                  y: 0
+                  width: 5
+                  height: 5
+                  radius: 3
+                  bg_color: 0x444444
+                  bg_opa: COVER
+                  border_width: 0
+              - obj:
+                  align: CENTER
+                  x: 12
+                  y: 0
+                  width: 7
+                  height: 7
+                  radius: 4
+                  bg_color: 0x999999
+                  bg_opa: COVER
+                  border_width: 0

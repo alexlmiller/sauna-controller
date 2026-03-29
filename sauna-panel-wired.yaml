@@ -1,0 +1,343 @@
+###############################################################################
+# Sauna Panel — Wired Transport (UART / RS-485)
+# For permanent install. Direct packet_transport to controller.
+# Temps arrive in °C from controller, converted to °F for display.
+###############################################################################
+
+substitutions:
+  device_name: sauna-panel-wired
+  friendly_name: Sauna Panel
+
+packages:
+  common: !include sauna-panel-common.yaml
+
+############### UART / RS-485 ###############
+
+uart:
+  tx_pin: GPIO43
+  rx_pin: GPIO44
+  baud_rate: 115200
+  id: controller_uart
+
+packet_transport:
+  platform: uart
+  uart_id: controller_uart
+  update_interval: 500ms
+  sensors:
+    - cmd_target_temp
+    - cmd_heat_mode
+    - cmd_light_brightness
+    - cmd_light_r
+    - cmd_light_g
+    - cmd_light_b
+    - cmd_light_w
+    - cmd_clear_fault_ctr
+    - cmd_light_toggle_ctr
+
+############### CONSUMED SENSOR DATA ###############
+
+sensor:
+  - platform: packet_transport
+    provider: sauna-controller
+    id: ceiling_temp_c
+    on_value:
+      then:
+        - lambda: 'id(last_rx_ms) = millis();'
+        - lvgl.label.update:
+            id: lbl_current_temp
+            text: !lambda 'return str_sprintf("%.0f°", x * 9.0/5.0 + 32.0);'
+        - lvgl.label.update:
+            id: lbl_info_ceiling
+            text: !lambda 'return str_sprintf("Ceiling  %.0f°F", x * 9.0/5.0 + 32.0);'
+        - script.execute: update_status_ring
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: bench_temp_c
+    on_value:
+      then:
+        - lambda: 'id(last_rx_ms) = millis();'
+        - lvgl.label.update:
+            id: lbl_info_bench
+            text: !lambda 'return str_sprintf("Bench    %.0f°F", x * 9.0/5.0 + 32.0);'
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: target_temp_current
+    on_value:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            float temp_f = x * 9.0/5.0 + 32.0;
+            if (!id(synced)) id(synced) = true;
+            if (id(target_temp_dirty) && abs(temp_f - id(local_target_temp)) < 1.5f) {
+              id(target_temp_dirty) = false;
+            }
+            if (!id(target_temp_dirty)) {
+              id(local_target_temp) = temp_f;
+            }
+        - lvgl.label.update:
+            id: lbl_target_temp
+            text: !lambda 'return str_sprintf("%.0f°F", x * 9.0/5.0 + 32.0);'
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: fault_code
+    on_value:
+      then:
+        - lambda: 'id(last_rx_ms) = millis();'
+        - if:
+            condition:
+              lambda: 'return (int)x > 0;'
+            then:
+              - lvgl.widget.show: fault_banner
+              - lvgl.label.update:
+                  id: lbl_fault_text
+                  text: !lambda |-
+                    int code = (int)x;
+                    switch(code) {
+                      case 1: return std::string("DOOR OPEN TIMEOUT");
+                      case 2: return std::string("HIGH TEMPERATURE");
+                      case 3: return std::string("WELDED CONTACTOR");
+                      case 4: return std::string("SENSOR FAULT");
+                      default: return std::string("FAULT");
+                    }
+            else:
+              - lvgl.widget.hide: fault_banner
+        - script.execute: update_status_ring
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: light_brightness_current
+    on_value:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            if (id(brightness_dirty) && abs(x - id(local_brightness)) < 0.02f) {
+              id(brightness_dirty) = false;
+            }
+            if (!id(brightness_dirty)) {
+              id(local_brightness) = x;
+            }
+        - lvgl.arc.update:
+            id: arc_brightness
+            value: !lambda 'return (int)(x * 100.0f);'
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: light_r_current
+    on_value:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            if (!id(light_color_dirty)) { id(local_light_r) = x; }
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: light_g_current
+    on_value:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            if (!id(light_color_dirty)) { id(local_light_g) = x; }
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: light_b_current
+    on_value:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            if (!id(light_color_dirty)) { id(local_light_b) = x; }
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: light_w_current
+    on_value:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            if (!id(light_color_dirty)) { id(local_light_w) = x; }
+
+  ############### COMMAND SENSORS ###############
+
+  # Target temp — sent in °F (local mirror is °F), controller expects °C
+  - platform: template
+    id: cmd_target_temp
+    lambda: |-
+      if (!id(synced) || !id(target_temp_dirty)) return NAN;
+      return (id(local_target_temp) - 32.0f) * 5.0f / 9.0f;
+    update_interval: 500ms
+
+  - platform: template
+    id: cmd_heat_mode
+    lambda: |-
+      if (!id(synced) || !id(heat_mode_dirty)) return NAN;
+      return id(local_heat_mode);
+    update_interval: 500ms
+
+  - platform: template
+    id: cmd_light_brightness
+    lambda: |-
+      if (!id(synced) || !id(brightness_dirty)) return NAN;
+      return id(local_brightness);
+    update_interval: 500ms
+
+  - platform: template
+    id: cmd_light_r
+    lambda: |-
+      if (!id(synced) || !id(light_color_dirty)) return NAN;
+      return id(local_light_r);
+    update_interval: 500ms
+
+  - platform: template
+    id: cmd_light_g
+    lambda: |-
+      if (!id(synced) || !id(light_color_dirty)) return NAN;
+      return id(local_light_g);
+    update_interval: 500ms
+
+  - platform: template
+    id: cmd_light_b
+    lambda: |-
+      if (!id(synced) || !id(light_color_dirty)) return NAN;
+      return id(local_light_b);
+    update_interval: 500ms
+
+  - platform: template
+    id: cmd_light_w
+    lambda: |-
+      if (!id(synced) || !id(light_color_dirty)) return NAN;
+      return id(local_light_w);
+    update_interval: 500ms
+
+  - platform: template
+    id: cmd_clear_fault_ctr
+    lambda: 'return (float)id(clear_fault_ctr);'
+    update_interval: 500ms
+
+  - platform: template
+    id: cmd_light_toggle_ctr
+    lambda: 'return (float)id(light_toggle_ctr);'
+    update_interval: 500ms
+
+############### CONSUMED STATUS DATA ###############
+
+binary_sensor:
+  - platform: packet_transport
+    provider: sauna-controller
+    id: door_sensor
+    on_state:
+      then:
+        - lambda: 'id(last_rx_ms) = millis();'
+        - lvgl.label.update:
+            id: lbl_info_door
+            text: !lambda 'return x ? std::string("Door     OPEN") : std::string("Door     CLOSED");'
+            text_color: !lambda 'return x ? lv_color_hex(0xFF6B00) : lv_color_hex(0x00CC66);'
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: contactor_aux_closed
+    on_state:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            id(heater_running) = x;
+        - script.execute: update_status_ring
+        - lvgl.label.update:
+            id: lbl_info_aux
+            text: !lambda 'return x ? std::string("Aux      ON") : std::string("Aux      OFF");'
+            text_color: !lambda 'return x ? lv_color_hex(0x00CC66) : lv_color_hex(0x888888);'
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: high_limit_trip
+    on_state:
+      then:
+        - lambda: 'id(last_rx_ms) = millis();'
+        - lvgl.label.update:
+            id: lbl_info_hilimit
+            text: !lambda 'return x ? std::string("Hi-Limit TRIP") : std::string("Hi-Limit OK");'
+            text_color: !lambda 'return x ? lv_color_hex(0xFF0000) : lv_color_hex(0x00CC66);'
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: fault_latched_bs
+    on_state:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            id(fault_active) = x;
+        - if:
+            condition:
+              lambda: 'return x;'
+            then:
+              - lvgl.widget.show: fault_banner
+            else:
+              - lvgl.widget.hide: fault_banner
+        - script.execute: update_status_ring
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: heat_mode_active
+    on_state:
+      then:
+        - lambda: |-
+            id(last_rx_ms) = millis();
+            float controller_val = x ? 1.0f : 0.0f;
+            if (id(heat_mode_dirty) && abs(controller_val - id(local_heat_mode)) < 0.1f) {
+              id(heat_mode_dirty) = false;
+            }
+            if (!id(heat_mode_dirty)) {
+              id(local_heat_mode) = controller_val;
+            }
+        - script.execute: update_status_ring
+        - lvgl.label.update:
+            id: lbl_info_heater
+            text: !lambda 'return x ? std::string("Heater   HEAT") : std::string("Heater   OFF");'
+            text_color: !lambda 'return x ? lv_color_hex(0xFF6B00) : lv_color_hex(0x888888);'
+
+  - platform: packet_transport
+    provider: sauna-controller
+    id: light_on
+    on_state:
+      then:
+        - lambda: 'id(last_rx_ms) = millis();'
+
+############### WIRED COMMAND FLAGS ###############
+# Preset clicks set preset_pending; convert to RGBW dirty flags here
+interval:
+  - interval: 500ms
+    then:
+      - lambda: |-
+          if (id(preset_pending) >= 0) {
+            int p = id(preset_pending);
+            id(preset_pending) = -1;
+            id(light_color_dirty) = true;
+            switch(p) {
+              case 0: // WHITE
+                id(local_light_r) = 0.0f; id(local_light_g) = 0.0f;
+                id(local_light_b) = 0.0f; id(local_light_w) = 1.0f;
+                break;
+              case 1: // WARM
+                id(local_light_r) = 0.5f; id(local_light_g) = 0.3f;
+                id(local_light_b) = 0.1f; id(local_light_w) = 0.8f;
+                break;
+              case 2: // RED
+                id(local_light_r) = 1.0f; id(local_light_g) = 0.31f;
+                id(local_light_b) = 0.16f; id(local_light_w) = 0.24f;
+                break;
+              case 3: // GREEN
+                id(local_light_r) = 0.0f; id(local_light_g) = 0.39f;
+                id(local_light_b) = 0.0f; id(local_light_w) = 0.0f;
+                break;
+            }
+          }
+          if (id(light_toggle_pending)) {
+            id(light_toggle_pending) = false;
+            id(light_toggle_ctr) += 1;
+          }
+          if (id(clear_fault_pending)) {
+            id(clear_fault_pending) = false;
+            id(clear_fault_ctr) += 1;
+          }
