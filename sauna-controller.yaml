@@ -328,6 +328,7 @@ sensor:
             if (id(sauna_light).current_values.is_on() &&
                 abs(b - id(sauna_light).current_values.get_brightness()) < 0.01f) return;
             auto call = id(sauna_light).make_call();
+            call.set_state(b > 0.0f);  // turn on if brightness > 0, off if 0
             call.set_brightness(b);
             call.set_transition_length(0);
             call.perform();

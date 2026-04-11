@@ -311,13 +311,15 @@ sensor:
             // Context-sensitive: which page is active?
             auto page = id(lv_active_page);
             if (page == 0) {
-              // Temp page: preview target (sent on click)
+              // Temp page: if heat is on, send immediately; if off, preview only
               if (!std::isnan(id(local_target_temp))) {
-                id(last_heater_interaction_ms) = millis();
                 id(local_target_temp) = std::min(id(local_target_temp) + 1.0f, 200.0f);
+                if (id(local_heat_mode) >= 0.5f) {
+                  id(last_heater_interaction_ms) = millis();
+                }
               }
             } else if (page == 1) {
-              // Light page: adjust brightness (sent immediately)
+              // Light page: adjust brightness (sent immediately, turns on if off)
               if (!std::isnan(id(local_brightness))) {
                 id(last_brightness_interaction_ms) = millis();
                 id(local_brightness) = std::min(id(local_brightness) + 0.05f, 1.0f);
@@ -330,8 +332,10 @@ sensor:
             auto page = id(lv_active_page);
             if (page == 0) {
               if (!std::isnan(id(local_target_temp))) {
-                id(last_heater_interaction_ms) = millis();
                 id(local_target_temp) = std::max(id(local_target_temp) - 1.0f, 150.0f);
+                if (id(local_heat_mode) >= 0.5f) {
+                  id(last_heater_interaction_ms) = millis();
+                }
               }
             } else if (page == 1) {
               if (!std::isnan(id(local_brightness))) {
