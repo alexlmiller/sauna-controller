@@ -1,0 +1,142 @@
+{
+  "board": {
+    "design_settings": {
+      "defaults": {},
+      "rules": {
+        "min_clearance": 0.127,
+        "min_copper_edge_clearance": 0.3,
+        "min_track_width": 0.2,
+        "min_via_diameter": 0.6,
+        "min_via_drill": 0.3
+      }
+    }
+  },
+  "meta": {
+    "filename": "sauna-rev-b.kicad_pro",
+    "version": 1
+  },
+  "net_settings": {
+    "classes": [
+      {
+        "name": "POWER_HV",
+        "clearance": 0.3,
+        "track_width": 2.0,
+        "via_diameter": 0.8,
+        "via_drill": 0.4,
+        "wire_width": 6,
+        "bus_width": 12,
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "nets": [
+          "+24V",
+          "+24V_LED"
+        ]
+      },
+      {
+        "name": "POWER_LV",
+        "clearance": 0.2,
+        "track_width": 0.5,
+        "via_diameter": 0.8,
+        "via_drill": 0.4,
+        "wire_width": 6,
+        "bus_width": 12,
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "nets": [
+          "+24V_LOGIC",
+          "+5V",
+          "+5V_PANEL"
+        ]
+      },
+      {
+        "name": "LED_OUT",
+        "clearance": 0.2,
+        "track_width": 1.0,
+        "via_diameter": 0.8,
+        "via_drill": 0.4,
+        "wire_width": 6,
+        "bus_width": 12,
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "nets": [
+          "+24V_SAFE",
+          "COIL-",
+          "LED_B-",
+          "LED_G-",
+          "LED_R-",
+          "LED_W-",
+          "SRL250_RTN"
+        ]
+      },
+      {
+        "name": "SIGNAL",
+        "clearance": 0.15,
+        "track_width": 0.3,
+        "via_diameter": 0.8,
+        "via_drill": 0.4,
+        "wire_width": 6,
+        "bus_width": 12,
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "nets": [
+          "+3V3",
+          "AUX_IN",
+          "AUX_LED",
+          "BENCH_DATA",
+          "CEIL_DATA",
+          "DOOR_IN",
+          "FAULT_A",
+          "GPIO13",
+          "GPIO14",
+          "GPIO16",
+          "GPIO17",
+          "GPIO18",
+          "GPIO19",
+          "GPIO22",
+          "GPIO23",
+          "GPIO25",
+          "GPIO26",
+          "GPIO27",
+          "GPIO32",
+          "GPIO33",
+          "GPIO4",
+          "G_B",
+          "G_COIL",
+          "G_G",
+          "G_R",
+          "G_W",
+          "HL_LED",
+          "LED24_A",
+          "LED5_A",
+          "PANEL_RX",
+          "PANEL_TX",
+          "SPARE_IN",
+          "SPARE_LED"
+        ]
+      },
+      {
+        "name": "GND",
+        "clearance": 0.2,
+        "track_width": 0.5,
+        "via_diameter": 0.8,
+        "via_drill": 0.4,
+        "wire_width": 6,
+        "bus_width": 12,
+        "pcb_color": "rgba(0, 0, 0, 0.000)",
+        "schematic_color": "rgba(0, 0, 0, 0.000)",
+        "nets": [
+          "GND"
+        ]
+      }
+    ],
+    "meta": {
+      "version": 3
+    }
+  },
+  "schematic": {
+    "legacy_lib_dir": "",
+    "legacy_lib_list": []
+  },
+  "sheets": [],
+  "text_variables": {}
+}
