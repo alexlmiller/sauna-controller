@@ -26,6 +26,7 @@ W = int(round(BOARD["width"] / PITCH)) + 1
 H = int(round(BOARD["height"] / PITCH)) + 1
 MARGIN = 0.05          # extra safety on top of class clearance
 VIA_R = 0.4
+VIA_CLEAR = 0.5        # via block-map radius (> VIA_R for corner margin)
 B_COST = 1.25          # multiplier for B.Cu steps (protect GND plane)
 VIA_COST = 40          # in grid steps
 
@@ -322,7 +323,7 @@ def main():
     print("placing GND stubs...", flush=True)
     gnd_smd = [p for p in net_pads.get("GND", []) if not p[2]]
     gb = block_map(obs, "GND", 0.15)       # 0.3 wide stub
-    vb = block_map(obs, "GND", VIA_R)
+    vb = block_map(obs, "GND", VIA_CLEAR)
     for gx, gy, _tht, label, _hx, _hy in gnd_smd:
         placed = False
         cands = []
@@ -402,7 +403,7 @@ def main():
                 net_cells.add((li, cx, cy))
                 net_pts[(li, cx, cy)] = (pads[0][0], pads[0][1])
         blocked = block_map(obs, net, half)
-        vb = block_map(obs, net, VIA_R)
+        vb = block_map(obs, net, VIA_CLEAR)
         via_ok = ~(vb[0] | vb[1])
         while remaining:
             remaining.sort(key=lambda p: min(

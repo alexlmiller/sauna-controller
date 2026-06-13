@@ -89,7 +89,7 @@ via `J_SRL250`). Firmware needs no change; fix the misleading comment.
 | 6 | `README.md` says panel comms are **RS-485 (SP3485)**; `PCB-PLANNING.md` and the as-built board use **direct 3.3 V UART** over the short Cat6 run | Rev B stays with direct UART (it is installed and working). An **unpopulated SOT-23-8 RS-485 footprint option was considered and rejected** — it adds routing burden for a transceiver the working install doesn't need; revisit only if UART proves unreliable. Update README. |
 | 7 | `README.md` parts list still says **10×38 mm DIN fuses, 7.5 A LED fuse**; the as-built plan switched to **5×20 mm, 5 A T** | Rev B: F1 LED = **5 A T**, F2 coil = **1 A F**, F3 logic = **1 A F**. README needs the same update (`PCB-REV-B-NOTES.md` already flags the stale 10×38 references). |
 | 8 | `PCB-LAYOUT-PLAN.md` lists `pcb/firmware-diff.yaml` (FAULT LED) as "already created" — **it is not in the repo**, and no fault-LED GPIO is assigned in firmware | Rev B routes a FAULT LED to **GPIO23** (free, no boot-strap role). It is harmless if firmware never drives it. GPIO25 stays reserved for the commented-out "Future Monitoring" opto input, which Rev B provides as a third, optionally-populated opto channel (`OPT_SPARE`). |
-| 9 | Rev A's 3-pin `COIL / SAFETY` connector confused field wiring | Split per the Rev B notes: **J_SRL250** (2-pin, bottom edge with the sauna-side harness) and **J_COIL** (2-pin, top edge near the contactor), plus **J_AUX** (2-pin, top edge). The 4-pin combined alternative was rejected because the SRL250 loop physically routes with the sauna harness, not the contactor. |
+| 9 | Rev A's 3-pin `COIL / SAFETY` connector confused field wiring | Split per the Rev B notes: **J_SRL250** (2-pin, bottom-right edge with the sauna-side harness) and **J_COIL** (2-pin, right edge next to the contactor), plus **J_AUX** (2-pin, right edge). The 4-pin combined alternative was rejected because the SRL250 loop physically routes with the sauna harness, not the contactor. |
 | 10 | `C_5V_IN1` schematic value didn't match the ordered part | Rev B schematic value is **10 µF / 50 V** as the notes require. |
 
 ## Gaps — things no document had thought through
@@ -143,16 +143,27 @@ equivalent, so nothing else changes.
 - Harness-first connector placement from PCB-REV-B-NOTES (see below).
 - Test points on every rail, every output, every debug-relevant GPIO.
 
-## Rev B connector plan (harness-first, per PCB-REV-B-NOTES)
+## Rev B connector plan (harness-first; the contactor sits to the RIGHT)
 
-| Edge | Connectors (left → right) | Rationale |
+The arrangement follows where each harness physically goes, with the
+contactor/relay located to the right of the board:
+
+| Edge | Connectors | Rationale |
 |---|---|---|
-| **Top** (DIN/contactor side) | `J_PWR` (24 V in), `J_COIL`, `J_AUX`, `J_LED` | Power, contactor, and LED harnesses come from the DIN half |
-| **Bottom** (sauna-entry side) | `J_PANEL`, `J_SRL250`, `J_DOOR`, `J_BENCH`, `J_CEILING` | Sensor/safety/panel harnesses enter via the bottom glands; SRL250 moved here as the notes require |
-| **Left** | ESP32 antenna keepout — no copper, no parts | RF |
+| **Right** | `J_COIL`, `J_AUX` | Contactor sits directly to the right — coil drive and aux feedback land next to it with the shortest field wires |
+| **Bottom** (sauna-entry side) | `J_PANEL`, `J_DOOR`, `J_BENCH`, `J_CEILING`, `J_SRL250` | Sensor/safety/panel harnesses enter via the bottom glands; SRL250 is on the **right side** of the bottom edge, toward the coil/contactor corner, per the field-wiring grouping |
+| **Top** | `J_PWR` (24 V in) | 24 V DIN-supply feed; fuse bank sits just below it |
+| **Left** | `J_LED` (upper-left, above the antenna keepout) | LED strip cable exits the left side; the high-current LED MOSFETs sit immediately beside it for short return traces |
 
-Fuse row sits between the top connectors and board center with finger
-clearance on all sides of each Keystone 3517 (fixes the Rev A coil-fuse
+The on-board sub-circuits were moved to follow their connectors: the coil
+MOSFET (Q1) + flyback and the three opto inputs cluster on the **right**
+beside `J_COIL`/`J_AUX`/`J_SRL250`; the four LED MOSFETs sit in the
+**upper-left** beside `J_LED`. The ESP32 socket stays center-left with its
+antenna facing the left edge (keepout preserved), well away from the
+contactor EMI on the right.
+
+The fuse bank (vertical, top-center, below `J_PWR`) keeps finger clearance on
+all sides of each top-access Keystone 3517 (fixes the Rev A coil-fuse
 crowding complaint).
 
 ## Firmware pin map used (verified against `sauna-controller.yaml`)

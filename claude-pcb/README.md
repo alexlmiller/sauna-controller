@@ -33,18 +33,23 @@ python3 tools/check_board.py      # must print "all checks passed"
 ## Board summary
 
 - 130 × 85 mm, 2-layer, **2 oz outer copper**, 4× M3 non-plated corner holes.
-- **Top edge** (DIN/contactor side): `J_COIL`, `J_AUX`, `J_LED` (R−,G−,B−,W−,V+),
-  `J_PWR` (24 V in) feeding a vertical bank of three top-access 5×20 fuse
-  holders (F1 LED 5 A T, F2 coil 1 A F, F3 logic 1 A F) with open finger
-  clearance — fixes the Rev A fuse-access complaint.
-- **Bottom edge** (sauna-harness side): `J_PANEL`, `J_SRL250`, `J_DOOR`,
-  `J_BENCH`, `J_CEILING` — the SRL250 loop now lands with the sauna-side
-  harness exactly as `PCB-REV-B-NOTES.md` asked.
-- ESP32 DevKitC socket (2× 1×19) mid-board, antenna facing the left edge with
-  a copper/part keepout zone; USB end open toward the board interior.
-- Five AOD4184A low-side switches; LED MOSFETs sit in a staggered bank
-  directly under the J_LED pins so the 1 mm return traces are short and
-  straight; 24 V runs are 2 mm on 2 oz copper.
+- **Right edge** (the contactor sits to the right): `J_COIL`, `J_AUX` — coil
+  drive and aux feedback land next to the relay with the shortest field wires.
+- **Top edge**: `J_PWR` (24 V in) feeding a vertical bank of three top-access
+  5×20 fuse holders (F1 LED 5 A T, F2 coil 1 A F, F3 logic 1 A F) with open
+  finger clearance — fixes the Rev A fuse-access complaint.
+- **Left edge** (upper, above the antenna keepout): `J_LED`
+  (R−,G−,B−,W−,V+) — the LED strip cable exits left.
+- **Bottom edge** (sauna-harness side): `J_PANEL`, `J_DOOR`, `J_BENCH`,
+  `J_CEILING`, `J_SRL250` — SRL250 on the **right side** of the bottom edge,
+  toward the coil/contactor corner, per `PCB-REV-B-NOTES.md`.
+- ESP32 DevKitC socket (2× 1×19) center-left, antenna facing the left edge
+  with a copper/part keepout zone, well away from the contactor EMI on the
+  right; USB end open toward the board interior.
+- Five AOD4184A low-side switches placed beside their connectors: the coil
+  MOSFET clusters on the right by `J_COIL`; the four LED MOSFETs sit in the
+  upper-left beside `J_LED` so the 1 mm return traces stay short; 24 V runs
+  are 2 mm on 2 oz copper.
 - Three LTV-817 opto inputs (AUX / high-limit / spare) with anti-parallel
   protection diodes, SMBJ30CA TVS, and debug test points — the Rev A AUX
   failure is addressed with verifiable polarity and probe pads.
