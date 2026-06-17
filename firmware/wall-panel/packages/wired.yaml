@@ -1,18 +1,13 @@
 ###############################################################################
-# Sauna Panel — Wired Transport (UART / RS-485)
-# For permanent install. Direct packet_transport to controller.
-# Temps arrive in °C from controller, converted to °F for display.
+# Wall Panel - Wired Transport (direct UART)
+# For permanent install. Direct packet_transport to the control board.
+# Temps arrive in °C from the control board, converted to °F for display.
 ###############################################################################
 
-substitutions:
-  device_name: sauna-panel-wired
-  friendly_name: Sauna Panel
-  link_timeout_ms: "5000"
-
 packages:
-  common: !include packages/sauna-panel-common.yaml
+  common: !include common.yaml
 
-############### UART / RS-485 ###############
+############### UART ###############
 
 uart:
   tx_pin: GPIO43
@@ -252,7 +247,7 @@ binary_sensor:
 
   - platform: packet_transport
     provider: sauna-controller
-    id: contactor_aux_closed
+    id: ${feedback_sensor_id}
     on_state:
       then:
         - lambda: |-
@@ -260,8 +255,8 @@ binary_sensor:
             id(heater_running) = x;
         - script.execute: update_status_ring
         - lvgl.label.update:
-            id: lbl_info_aux
-            text: !lambda 'return x ? std::string("Aux      ON") : std::string("Aux      OFF");'
+            id: lbl_info_feedback
+            text: !lambda 'return x ? std::string("${feedback_on_text}") : std::string("${feedback_off_text}");'
             text_color: !lambda 'return x ? lv_color_hex(0x00CC66) : lv_color_hex(0x888888);'
 
   - platform: packet_transport

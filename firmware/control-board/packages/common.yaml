@@ -1,9 +1,9 @@
 esphome:
-  name: sauna-controller
-  friendly_name: Sauna Controller
+  name: ${device_name}
+  friendly_name: ${friendly_name}
   project:
     name: sauna.open_controller
-    version: "1.0"
+    version: "${controller_project_version}"
 
 esp32:
   board: esp32dev
@@ -25,7 +25,7 @@ time:
 # Required for syslog - UDP client
 udp:
   id: syslog_udp
-  addresses: !secret syslog_host
+  addresses: ${syslog_host}
 
 # Remote syslog to VictoriaLogs via Alloy
 syslog:
@@ -36,18 +36,18 @@ syslog:
 
 ota:
   platform: esphome
-  password: !secret ota_password
+  password: ${ota_password}
 
 api:
   encryption:
-    key: !secret api_key
+    key: ${api_key}
 
 wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
+  ssid: ${wifi_ssid}
+  password: ${wifi_password}
   ap:
     ssid: ${friendly_name}_AP
-    password: !secret wifi_fallback_pw
+    password: ${wifi_fallback_pw}
 
 web_server:
   port: 80
@@ -139,7 +139,7 @@ binary_sensor:
     name: "Sauna Door"
     device_class: door
     pin:
-      number: GPIO22  # Changed from GPIO21 - GPIO21 not responding
+      number: ${door_pin}
       mode:
         input: true
         pullup: true
@@ -153,17 +153,17 @@ binary_sensor:
             format: "Door sensor changed to: %s"
             args: ['x ? "OPEN" : "CLOSED"']
 
-# ----- Contactor Status (Aux Relay) -----  
+# ----- Relay Feedback Status -----
   - platform: gpio
-    id: contactor_aux_closed
-    name: "Contactor Aux Closed"
+    id: ${feedback_sensor_id}
+    name: "${feedback_sensor_name}"
     pin:
-      number: GPIO32
+      number: ${feedback_pin}
       mode:
         input: true
-        pullup: true
+        pullup: ${feedback_pullup}
     filters:
-      - lambda: return !x;      # TRUE when aux closed (opto pulls low)
+      - lambda: return !x;      # TRUE when relay feedback closed (opto pulls low)
       - delayed_on: 50ms
       - delayed_off: 50ms
 
@@ -172,12 +172,12 @@ binary_sensor:
     id: high_limit_trip
     name: "High Limit Trip"
     pin:
-      number: GPIO33
+      number: ${high_limit_pin}
       mode:
         input: true
-        pullup: true
+        pullup: ${high_limit_pullup}
     filters:
-      - lambda: return x;      # FALSE when tripped (opto pulls high)
+      - lambda: return x;      # opto ON (GPIO low) = loop OK; GPIO high = tripped
       - delayed_on: 100ms
       - delayed_off: 100ms
 
@@ -403,24 +403,24 @@ output:
 # ---------------- Contactor ----------------
 
   - platform: gpio
-    pin: GPIO13
+    pin: ${coil_pin}
     id: coil_output
 
 # ---------------- LED MOSFETS ----------------
   - platform: ledc
-    pin: GPIO16
+    pin: ${pwm_r_pin}
     id: pwm_r
     frequency: 19531 Hz
   - platform: ledc
-    pin: GPIO17
+    pin: ${pwm_g_pin}
     id: pwm_g
     frequency: 19531 Hz
   - platform: ledc
-    pin: GPIO18
+    pin: ${pwm_b_pin}
     id: pwm_b
     frequency: 19531 Hz
   - platform: ledc
-    pin: GPIO19
+    pin: ${pwm_w_pin}
     id: pwm_w
     frequency: 19531 Hz
 
@@ -559,19 +559,19 @@ interval:
           // ============================================
           // 3. WELDED CONTACTOR DETECTION
           // ============================================
-          // Check if contactor aux shows closed when coil should be OFF
+          // Check if contactor relay feedback shows closed when coil should be OFF
           bool coil_commanded_on = id(coil_is_on);
-          bool aux_reports_closed = id(contactor_aux_closed).state;
+          bool feedback_reports_closed = id(${feedback_sensor_id}).state;
           
-          if (!coil_commanded_on && aux_reports_closed) {
-            // Contactor appears welded (aux closed when coil is OFF)
+          if (!coil_commanded_on && feedback_reports_closed) {
+            // Contactor appears welded (relay feedback closed when coil is OFF)
             if (id(welded_detect_since) == 0) {
               id(welded_detect_since) = millis();
-              ESP_LOGW("safety", "Possible welded contactor detected (coil OFF but aux closed)");
+              ESP_LOGW("safety", "Possible welded contactor detected (coil OFF but relay feedback closed)");
             } else if (millis() - id(welded_detect_since) > 3000) {  // 3 second confirmation
               id(fault_latched) = true;
               id(fault_code_val) = 3;  // WELDED CONTACTOR
-              id(last_trip_reason) = "Welded contactor detected (aux closed when coil OFF)";
+              id(last_trip_reason) = "Welded contactor detected (relay feedback closed when coil OFF)";
               id(coil_output).turn_off();
               id(coil_is_on) = false;
               id(welded_detect_since) = 0;
@@ -620,12 +620,12 @@ text_sensor:
     lambda: |-
       return id(last_trip_reason);
 
-################### PANEL TRANSPORT (UART / RS-485) ###################
+################### PANEL TRANSPORT (UART) ###################
 
 uart:
   - id: panel_uart
-    tx_pin: GPIO14
-    rx_pin: GPIO4
+    tx_pin: ${panel_tx_pin}
+    rx_pin: ${panel_rx_pin}
     baud_rate: 115200
 
 packet_transport:
@@ -644,9 +644,8 @@ packet_transport:
       - light_w_current
     binary_sensors:
       - door_sensor
-      - contactor_aux_closed
+      - ${feedback_sensor_id}
       - high_limit_trip
       - fault_latched_bs
       - heat_mode_active
       - light_on
-

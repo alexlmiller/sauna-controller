@@ -1,19 +1,14 @@
 ###############################################################################
-# Sauna Panel — WiFi Transport (via Home Assistant)
-# For desk testing. Panel subscribes to controller entities via HA native API.
+# Wall Panel — WiFi Transport (via Home Assistant)
+# For desk testing. Panel subscribes to control board entities via HA native API.
 ###############################################################################
 
-substitutions:
-  device_name: sauna-panel
-  friendly_name: Sauna Panel
-  link_timeout_ms: "30000"
-
 packages:
-  common: !include packages/sauna-panel-common.yaml
+  common: !include common.yaml
 
 api:
   encryption:
-    key: !secret api_key
+    key: ${api_key}
 
 ############### CONSUMED SENSOR DATA ###############
 
@@ -87,8 +82,8 @@ binary_sensor:
             text_color: !lambda 'return x ? lv_color_hex(0xFF6B00) : lv_color_hex(0x00CC66);'
 
   - platform: homeassistant
-    id: contactor_aux_closed
-    entity_id: binary_sensor.sauna_controller_contactor_aux_closed
+    id: ${feedback_sensor_id}
+    entity_id: ${feedback_ha_entity}
     on_state:
       then:
         - lambda: |-
@@ -96,8 +91,8 @@ binary_sensor:
             id(heater_running) = x;
         - script.execute: update_status_ring
         - lvgl.label.update:
-            id: lbl_info_aux
-            text: !lambda 'return x ? std::string("Aux      ON") : std::string("Aux      OFF");'
+            id: lbl_info_feedback
+            text: !lambda 'return x ? std::string("${feedback_on_text}") : std::string("${feedback_off_text}");'
             text_color: !lambda 'return x ? lv_color_hex(0x00CC66) : lv_color_hex(0x888888);'
 
   - platform: homeassistant

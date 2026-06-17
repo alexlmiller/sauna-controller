@@ -1,0 +1,16 @@
+# Wired wall panel firmware for Rev A control board firmware.
+
+substitutions:
+  device_name: sauna-panel-wired
+  friendly_name: Sauna Panel
+  link_timeout_ms: "5000"
+  feedback_sensor_id: contactor_aux_closed
+  feedback_placeholder_text: "Aux      --"
+  feedback_on_text: "Aux      ON"
+  feedback_off_text: "Aux      OFF"
+  wifi_ssid: !secret wifi_ssid
+  wifi_password: !secret wifi_password
+  ota_password: !secret ota_password
+
+packages:
+  wall_panel: !include ../../wall-panel/packages/wired.yaml

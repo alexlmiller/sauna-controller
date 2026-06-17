@@ -1,0 +1,18 @@
+# WiFi/HA wall panel firmware for the current Rev B control board.
+
+substitutions:
+  device_name: sauna-panel
+  friendly_name: Sauna Panel
+  link_timeout_ms: "30000"
+  feedback_sensor_id: relay_fb_closed
+  feedback_ha_entity: binary_sensor.sauna_controller_relay_feedback_closed
+  feedback_placeholder_text: "Relay    --"
+  feedback_on_text: "Relay    ON"
+  feedback_off_text: "Relay    OFF"
+  wifi_ssid: !secret wifi_ssid
+  wifi_password: !secret wifi_password
+  ota_password: !secret ota_password
+  api_key: !secret api_key
+
+packages:
+  wall_panel: !include packages/wifi.yaml
