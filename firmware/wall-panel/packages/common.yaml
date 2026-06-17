@@ -1,0 +1,996 @@
+###############################################################################
+# Wall Panel — CrowPanel 2.1" Common Config
+# Shared UI, hardware, and interaction logic.
+# Import this via packages/wifi.yaml or packages/wired.yaml.
+###############################################################################
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  platformio_options:
+    build_flags: "-DBOARD_HAS_PSRAM"
+    board_build.esp-idf.memory_type: qio_opi
+    board_build.flash_mode: dio
+  on_boot:
+    priority: 800
+    then:
+      # CrowPanel PCF8574 boot sequence — mandatory
+      - output.turn_on: lcd_power
+      - output.turn_on: display_reset
+      - delay: 100ms
+      - output.turn_off: display_reset
+      - delay: 100ms
+      - output.turn_on: tp_reset
+      - delay: 100ms
+      - output.turn_off: tp_reset
+      - delay: 120ms
+      - output.turn_on: tp_reset
+      - delay: 120ms
+      - output.turn_on: tp_intr
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: "y"
+      CONFIG_SPIRAM_RODATA: "y"
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO
+  baud_rate: 0  # Free GPIO43/44 for the wired panel UART
+
+wifi:
+  ssid: ${wifi_ssid}
+  password: ${wifi_password}
+
+ota:
+  platform: esphome
+  password: ${ota_password}
+
+############### GLOBALS ###############
+globals:
+  # Sync state
+  - id: synced
+    type: bool
+    initial_value: "false"
+
+  # Local mirrors — NaN = not yet synced
+  - id: local_target_temp
+    type: float
+    initial_value: "NAN"
+  - id: local_heat_mode
+    type: float
+    initial_value: "NAN"
+  - id: local_brightness
+    type: float
+    initial_value: "NAN"
+  - id: local_light_r
+    type: float
+    initial_value: "NAN"
+  - id: local_light_g
+    type: float
+    initial_value: "NAN"
+  - id: local_light_b
+    type: float
+    initial_value: "NAN"
+  - id: local_light_w
+    type: float
+    initial_value: "NAN"
+
+  # Interaction timestamps — suppress controller echo for 2s after user input
+  - id: last_heater_interaction_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: last_brightness_interaction_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: last_color_interaction_ms
+    type: uint32_t
+    initial_value: "0"
+
+  # One-shot action counters
+  - id: clear_fault_ctr
+    type: int
+    initial_value: "0"
+  - id: light_toggle_ctr
+    type: int
+    initial_value: "0"
+
+  # Active preset (-1 = custom/unknown)
+  - id: active_preset
+    type: int
+    initial_value: "-1"
+
+  # Link state
+  - id: last_rx_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: link_up
+    type: bool
+    initial_value: "false"
+
+  # Active page tracker (0=main, 1=light, 2=info)
+  - id: lv_active_page
+    type: int
+    initial_value: "0"
+
+  # Status ring color (for cross-lambda access)
+  - id: status_ring_color
+    type: uint32_t
+    initial_value: "0x555555"
+
+  # Transport-agnostic state mirrors
+  - id: fault_active
+    type: bool
+    initial_value: "false"
+  - id: heater_running
+    type: bool
+    initial_value: "false"
+  - id: current_temp
+    type: float
+    initial_value: "NAN"
+
+  # Preset selection timestamp (debounce HA echo for WiFi)
+  - id: preset_set_ms
+    type: uint32_t
+    initial_value: "0"
+
+  # Transport-agnostic command flags
+  - id: light_toggle_pending
+    type: bool
+    initial_value: "false"
+  - id: clear_fault_pending
+    type: bool
+    initial_value: "false"
+  - id: preset_pending
+    type: int
+    initial_value: "-1"
+
+  # Light ring color (matches active preset)
+  - id: light_ring_color
+    type: uint32_t
+    initial_value: "0xFF6B00"
+
+############### CROWPANEL HARDWARE ###############
+
+i2c:
+  sda: GPIO38
+  scl: GPIO39
+  id: bus_a
+
+pcf8574:
+  - id: pcf
+    address: 0x21
+
+output:
+  - platform: ledc
+    pin: 6
+    id: bl_pwm
+    frequency: 19531Hz
+  - platform: gpio
+    id: lcd_power
+    pin:
+      pcf8574: pcf
+      number: 3
+      mode: { output: true }
+      inverted: false
+  - platform: gpio
+    id: display_reset
+    pin:
+      pcf8574: pcf
+      number: 4
+      mode: { output: true }
+      inverted: true
+  - platform: gpio
+    id: tp_reset
+    pin:
+      pcf8574: pcf
+      number: 0
+      mode: { output: true }
+  - platform: gpio
+    id: tp_intr
+    pin:
+      pcf8574: pcf
+      number: 2
+      mode: { output: true }
+
+light:
+  - platform: monochromatic
+    name: "LCD Backlight"
+    output: bl_pwm
+    id: display_backlight
+    default_transition_length: 0s
+    restore_mode: ALWAYS_ON
+
+spi:
+  clk_pin: 2
+  mosi_pin: 1
+
+external_components:
+  - source: github://sEbola76/Makerfabs
+    components: [cst826]
+
+touchscreen:
+  platform: cst826
+  id: panel_touch
+  i2c_id: bus_a
+  skip_probe: true
+  update_interval: 50ms
+  address: 0x15
+
+display:
+  - platform: st7701s
+    id: panel_display
+    update_interval: never
+    spi_mode: MODE3
+    color_order: RGB
+    invert_colors: false
+    dimensions:
+      width: 480
+      height: 480
+    cs_pin: 16
+    de_pin: 40
+    hsync_pin: 15
+    vsync_pin: 7
+    pclk_pin: 41
+    data_pins:
+      red: [46, 3, 8, 18, 17]
+      green: [14, 13, 12, 11, 10, 9]
+      blue: [5, 45, 48, 47, 21]
+    hsync_front_porch: 20
+    hsync_pulse_width: 10
+    hsync_back_porch: 10
+    vsync_front_porch: 8
+    vsync_pulse_width: 10
+    vsync_back_porch: 10
+    pclk_frequency: 21MHz
+    pclk_inverted: true
+    init_sequence:
+      - [0x01]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x10]
+      - [0xCC, 0x10]
+      - [0xCD, 0x08]
+      - [0xB0, 0x02, 0x13, 0x1B, 0x0D, 0x10, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+      - [0xB1, 0x05, 0x13, 0x1B, 0x0D, 0x11, 0x05, 0x08, 0x07, 0x07, 0x24, 0x04, 0x11, 0x0E, 0x2C, 0x33, 0x1D]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x11]
+      - [0xB0, 0x5D]
+      - [0xB1, 0x43]
+      - [0xB2, 0x81]
+      - [0xB3, 0x80]
+      - [0xB5, 0x43]
+      - [0xB7, 0x85]
+      - [0xB8, 0x20]
+      - [0xC1, 0x78]
+      - [0xC2, 0x78]
+      - [0xD0, 0x88]
+      - [0xE0, 0x00, 0x00, 0x02]
+      - [0xE1, 0x03, 0xA0, 0x00, 0x00, 0x04, 0xA0, 0x00, 0x00, 0x00, 0x20, 0x20]
+      - [0xE2, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xE3, 0x00, 0x00, 0x11, 0x00]
+      - [0xE4, 0x22, 0x00]
+      - [0xE5, 0x05, 0xEC, 0xA0, 0xA0, 0x07, 0xEE, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xE6, 0x00, 0x00, 0x11, 0x00]
+      - [0xE7, 0x22, 0x00]
+      - [0xE8, 0x06, 0xED, 0xA0, 0xA0, 0x08, 0xEF, 0xA0, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+      - [0xEB, 0x00, 0x00, 0x40, 0x40, 0x00, 0x00, 0x00]
+      - [0xED, 0xFF, 0xFF, 0xFF, 0xBA, 0x0A, 0xBF, 0x45, 0xFF, 0xFF, 0x54, 0xFB, 0xA0, 0xAB, 0xFF, 0xFF, 0xFF]
+      - [0xEF, 0x10, 0x0D, 0x04, 0x08, 0x3F, 0x1F]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x13]
+      - [0xEF, 0x08]
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x00]
+      - [0x36, 0x00]
+      - [0x3A, 0x60]
+      - [0x11]
+      - delay 100ms
+      - [0x29]
+      - delay 50ms
+
+
+############### ROTARY ENCODER ###############
+
+sensor:
+  - platform: rotary_encoder
+    id: panel_encoder
+    pin_a:
+      number: GPIO4
+      mode: { input: true, pullup: true }
+    pin_b:
+      number: GPIO42
+      mode: { input: true, pullup: true }
+    resolution: 1
+    on_clockwise:
+      then:
+        - lambda: |-
+            // Context-sensitive: which page is active?
+            auto page = id(lv_active_page);
+            if (page == 0) {
+              // Temp page: if heat is on, send immediately; if off, preview only
+              if (!std::isnan(id(local_target_temp))) {
+                id(local_target_temp) = std::min(id(local_target_temp) + 1.0f, 200.0f);
+                if (id(local_heat_mode) >= 0.5f) {
+                  id(last_heater_interaction_ms) = millis();
+                }
+              }
+            } else if (page == 1) {
+              // Light page: adjust brightness (sent immediately, turns on if off)
+              if (!std::isnan(id(local_brightness))) {
+                id(last_brightness_interaction_ms) = millis();
+                id(local_brightness) = std::min(id(local_brightness) + 0.05f, 1.0f);
+                lv_arc_set_value(id(arc_brightness), (int)(id(local_brightness) * 100.0f));
+              }
+            }
+    on_anticlockwise:
+      then:
+        - lambda: |-
+            auto page = id(lv_active_page);
+            if (page == 0) {
+              if (!std::isnan(id(local_target_temp))) {
+                id(local_target_temp) = std::max(id(local_target_temp) - 1.0f, 150.0f);
+                if (id(local_heat_mode) >= 0.5f) {
+                  id(last_heater_interaction_ms) = millis();
+                }
+              }
+            } else if (page == 1) {
+              if (!std::isnan(id(local_brightness))) {
+                id(last_brightness_interaction_ms) = millis();
+                id(local_brightness) = std::max(id(local_brightness) - 0.05f, 0.0f);
+                lv_arc_set_value(id(arc_brightness), (int)(id(local_brightness) * 100.0f));
+              }
+            }
+
+binary_sensor:
+  - platform: gpio
+    id: encoder_button
+    pin:
+      pcf8574: pcf
+      number: 5
+      mode: { input: true }
+      inverted: true
+    on_multi_click:
+      - timing:
+          - ON for at most 500ms
+          - OFF for at least 50ms
+        then:
+          # Short press: context-sensitive
+          - lambda: |-
+              auto page = id(lv_active_page);
+              if (page == 0) {
+                // Temp page: "Set" — send target temp + turn on
+                id(last_heater_interaction_ms) = millis();
+                id(local_heat_mode) = 1.0f;
+              } else if (page == 1) {
+                // Light page: toggle lights on/off
+                id(light_toggle_pending) = true;
+              } else if (page == 2) {
+                // Info page: clear fault
+                id(clear_fault_pending) = true;
+              }
+      - timing:
+          - ON for at least 700ms
+        then:
+          # Long press: context-sensitive
+          - lambda: |-
+              auto page = id(lv_active_page);
+              if (page == 0) {
+                // Temp page: turn off
+                id(last_heater_interaction_ms) = millis();
+                id(local_heat_mode) = 0.0f;
+              }
+
+  # Transport-specific sensors are added by packages/wifi.yaml or packages/wired.yaml
+
+############### SCRIPTS ###############
+
+script:
+  - id: update_status_ring
+    then:
+      - lambda: |-
+          uint32_t color;
+          // Guard: before first sync, show gray
+          if (std::isnan(id(local_heat_mode)) || std::isnan(id(current_temp))) {
+            color = 0x555555;
+          } else if (id(fault_active)) {
+            color = 0xFF0000;      // Fault — red
+          } else if (id(local_heat_mode) < 0.5f) {
+            color = 0x555555;      // Heat off — gray
+          } else if (id(heater_running)) {
+            if (!std::isnan(id(local_target_temp)) &&
+                abs(id(current_temp) - id(local_target_temp)) <= 2.0f) {
+              color = 0x00CC66;    // At target — green
+            } else {
+              color = 0xFF6B00;    // Heating — orange
+            }
+          } else {
+            color = 0x3366AA;      // Standby — muted blue
+          }
+          id(status_ring_color) = color;
+      - lvgl.arc.update:
+          id: arc_status_ring
+          indicator:
+            arc_color: !lambda 'return lv_color_hex(id(status_ring_color));'
+      - lvgl.label.update:
+          id: lbl_status
+          text_color: !lambda 'return lv_color_hex(id(status_ring_color));'
+          text: !lambda |-
+            if (std::isnan(id(local_heat_mode)) || std::isnan(id(current_temp)))
+              return std::string("---");
+            if (id(fault_active)) return std::string("FAULT");
+            if (id(local_heat_mode) < 0.5f) return std::string("OFF");
+            if (id(heater_running)) {
+              if (!std::isnan(id(local_target_temp)) &&
+                  abs(id(current_temp) - id(local_target_temp)) <= 2.0f)
+                return std::string("AT TARGET");
+              return std::string("HEATING");
+            }
+            return std::string("IDLE");
+
+  - id: update_light_selection
+    then:
+      # Set outline on active preset circle
+      - lvgl.obj.update:
+          id: btn_preset_warm
+          outline_width: !lambda 'return id(active_preset) == 0 ? 3 : 0;'
+          outline_color: 0x999999
+          outline_pad: 4
+      - lvgl.obj.update:
+          id: btn_preset_sunset
+          outline_width: !lambda 'return id(active_preset) == 1 ? 3 : 0;'
+          outline_color: 0x999999
+          outline_pad: 4
+      - lvgl.obj.update:
+          id: btn_preset_red
+          outline_width: !lambda 'return id(active_preset) == 2 ? 3 : 0;'
+          outline_color: 0x999999
+          outline_pad: 4
+      - lvgl.obj.update:
+          id: btn_preset_blue
+          outline_width: !lambda 'return id(active_preset) == 3 ? 3 : 0;'
+          outline_color: 0x999999
+          outline_pad: 4
+
+  - id: update_light_ring
+    then:
+      - lambda: |-
+          uint32_t color;
+          switch(id(active_preset)) {
+            case 0: color = 0xFFFFFF; break;  // WHITE
+            case 1: color = 0xFFB366; break;  // WARM
+            case 2: color = 0x8B0000; break;  // RED
+            case 3: color = 0x006400; break;  // GREEN
+            default: color = 0xFF6B00; break; // default orange
+          }
+          id(light_ring_color) = color;
+      - lvgl.arc.update:
+          id: arc_brightness
+          indicator:
+            arc_color: !lambda 'return lv_color_hex(id(light_ring_color));'
+
+############### INTERVALS ###############
+
+interval:
+  # Link state detection
+  - interval: 1s
+    then:
+      - lambda: |-
+          bool was_up = id(link_up);
+          bool is_up = (id(last_rx_ms) > 0) && (millis() - id(last_rx_ms) < ${link_timeout_ms});
+          id(link_up) = is_up;
+          if (!was_up && is_up) {
+            id(synced) = false;
+          }
+      - if:
+          condition:
+            lambda: 'return !id(link_up) && millis() > 10000;'
+          then:
+            - lvgl.widget.show: no_link_warning
+          else:
+            - lvgl.widget.hide: no_link_warning
+
+  # UI refresh — push local mirrors to display + send commands via HA
+  - interval: 500ms
+    then:
+      - lambda: 'if (!id(synced)) return;'
+      - if:
+          condition:
+            lambda: 'return !std::isnan(id(local_target_temp));'
+          then:
+            - lvgl.label.update:
+                id: lbl_target_temp
+                text: !lambda |-
+                  float tf = id(local_target_temp);
+                  return str_sprintf("%.0f°F", tf);
+      - if:
+          condition:
+            lambda: 'return !std::isnan(id(local_brightness));'
+          then:
+            - lvgl.arc.update:
+                id: arc_brightness
+                value: !lambda 'return (int)(id(local_brightness) * 100.0f);'
+            - lvgl.label.update:
+                id: lbl_brightness_pct
+                text: !lambda 'return str_sprintf("%d%%", (int)(id(local_brightness) * 100.0f));'
+      # Command sending is handled by transport-specific file (wifi or wired)
+
+############### FONTS ###############
+
+font:
+  - file: "gfonts://Montserrat@300"
+    id: font_hero
+    size: 96
+    bpp: 4
+    glyphs: " 0123456789°"
+  - file: "gfonts://Montserrat@400"
+    id: font_body
+    size: 22
+    bpp: 4
+    glyphs: " !%()-./0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz°"
+  - file: "gfonts://Montserrat@400"
+    id: font_body_lg
+    size: 28
+    bpp: 4
+    glyphs: " !%()-./0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz°"
+
+############### LVGL UI ###############
+
+lvgl:
+  displays:
+    - panel_display
+  touchscreens:
+    - panel_touch
+  encoders:
+    - group: main_group
+      enter_button: encoder_button
+      sensor: panel_encoder
+  color_depth: 16
+  buffer_size: 100%
+  page_wrap: true
+
+
+
+
+
+
+
+
+  pages:
+    ###########################################################
+    # TEMPERATURE
+    ###########################################################
+    - id: main_page
+      bg_color: 0x111118
+      bg_opa: COVER
+      widgets:
+        # Ring
+        - arc:
+            id: arc_status_ring
+            width: 460
+            height: 460
+            align: CENTER
+            x: 2
+            y: 9
+            adjustable: false
+            start_angle: 135
+            end_angle: 45
+            value: 100
+            min_value: 0
+            max_value: 100
+            arc_width: 36
+            arc_color: 0x222230
+            indicator:
+              arc_width: 36
+              arc_color: 0x555555
+
+        # Page title
+        - label:
+            align: CENTER
+            y: -115
+            text: "HEATER"
+            text_font: font_body
+            text_color: 0x555555
+
+        # Temperature
+        - label:
+            id: lbl_current_temp
+            align: CENTER
+            y: -15
+            text: "--°"
+            text_font: font_hero
+            text_color: 0xFFFFFF
+
+        # Target
+        - label:
+            id: lbl_target_temp
+            align: CENTER
+            y: 55
+            text: "--°F"
+            text_font: font_body_lg
+            text_color: 0x666666
+
+        # Status
+        - label:
+            id: lbl_status
+            align: CENTER
+            y: 105
+            text: "OFF"
+            text_font: font_body_lg
+            text_color: 0x555555
+
+        # Fault
+        - obj:
+            id: fault_banner
+            align: CENTER
+            y: -85
+            width: 240
+            height: 48
+            bg_color: 0xDD2222
+            bg_opa: COVER
+            radius: 24
+            hidden: true
+            widgets:
+              - label:
+                  id: lbl_fault_text
+                  align: CENTER
+                  text: "FAULT"
+                  text_font: font_body
+                  text_color: 0xFFFFFF
+
+        # No link
+        - label:
+            id: no_link_warning
+            align: CENTER
+            y: -75
+            text: "NO LINK"
+            text_font: font_body
+            text_color: 0xFF5555
+            hidden: true
+
+        # Page nav — tap zone in ring gap at bottom
+        - obj:
+            align: BOTTOM_MID
+            y: -15
+            width: 160
+            height: 60
+            bg_opa: TRANSP
+            border_width: 0
+            on_click:
+              then:
+                - lambda: 'id(lv_active_page) = (id(lv_active_page) + 1) % 3;'
+                - lvgl.page.next:
+                    animation: FADE_IN
+                    time: 150ms
+            widgets:
+              - obj:
+                  align: CENTER
+                  x: -10
+                  y: 0
+                  width: 7
+                  height: 7
+                  radius: 4
+                  bg_color: 0x999999
+                  bg_opa: COVER
+                  border_width: 0
+              - obj:
+                  align: CENTER
+                  x: 2
+                  y: 0
+                  width: 5
+                  height: 5
+                  radius: 3
+                  bg_color: 0x444444
+                  bg_opa: COVER
+                  border_width: 0
+              - obj:
+                  align: CENTER
+                  x: 12
+                  y: 0
+                  width: 5
+                  height: 5
+                  radius: 3
+                  bg_color: 0x444444
+                  bg_opa: COVER
+                  border_width: 0
+
+    ###########################################################
+    # LIGHTING — 2x2 color circles
+    ###########################################################
+    - id: light_page
+      bg_color: 0x111118
+      bg_opa: COVER
+      widgets:
+        # Brightness ring
+        - arc:
+            id: arc_brightness
+            width: 460
+            height: 460
+            align: CENTER
+            x: 2
+            y: 9
+            adjustable: false
+            start_angle: 135
+            end_angle: 45
+            min_value: 0
+            max_value: 100
+            value: 0
+            arc_width: 36
+            arc_color: 0x222230
+            indicator:
+              arc_width: 36
+              arc_color: 0xFF6B00
+
+        # Page title
+        - label:
+            align: CENTER
+            y: -115
+            text: "LIGHTS"
+            text_font: font_body
+            text_color: 0x555555
+
+        # Hidden brightness label for data binding
+        - label:
+            id: lbl_brightness_pct
+            hidden: true
+            text: ""
+
+        # 2x2 color circles — no labels, bigger
+        - button:
+            id: btn_preset_warm
+            align: CENTER
+            x: -52
+            y: -22
+            width: 80
+            height: 80
+            radius: 40
+            bg_color: 0xFFFFFF
+            border_width: 0
+            outline_width: 0
+            on_click:
+              then:
+                - lambda: 'id(active_preset) = 0; id(preset_pending) = 0; id(preset_set_ms) = millis();'
+                - script.execute: update_light_ring
+                - script.execute: update_light_selection
+
+        - button:
+            id: btn_preset_sunset
+            align: CENTER
+            x: 52
+            y: -22
+            width: 80
+            height: 80
+            radius: 40
+            bg_color: 0xFFB366
+            border_width: 0
+            outline_width: 0
+            on_click:
+              then:
+                - lambda: 'id(active_preset) = 1; id(preset_pending) = 1; id(preset_set_ms) = millis();'
+                - script.execute: update_light_ring
+                - script.execute: update_light_selection
+
+        - button:
+            id: btn_preset_red
+            align: CENTER
+            x: -52
+            y: 82
+            width: 80
+            height: 80
+            radius: 40
+            bg_color: 0x8B0000
+            border_width: 0
+            outline_width: 0
+            on_click:
+              then:
+                - lambda: 'id(active_preset) = 2; id(preset_pending) = 2; id(preset_set_ms) = millis();'
+                - script.execute: update_light_ring
+                - script.execute: update_light_selection
+
+        - button:
+            id: btn_preset_blue
+            align: CENTER
+            x: 52
+            y: 82
+            width: 80
+            height: 80
+            radius: 40
+            bg_color: 0x006400
+            border_width: 0
+            outline_width: 0
+            on_click:
+              then:
+                - lambda: 'id(active_preset) = 3; id(preset_pending) = 3; id(preset_set_ms) = millis();'
+                - script.execute: update_light_ring
+                - script.execute: update_light_selection
+
+        # Page dots
+        # Page nav — tap zone in ring gap at bottom
+        - obj:
+            align: BOTTOM_MID
+            y: -15
+            width: 160
+            height: 60
+            bg_opa: TRANSP
+            border_width: 0
+            on_click:
+              then:
+                - lambda: 'id(lv_active_page) = (id(lv_active_page) + 1) % 3;'
+                - lvgl.page.next:
+                    animation: FADE_IN
+                    time: 150ms
+            widgets:
+              - obj:
+                  align: CENTER
+                  x: -10
+                  y: 0
+                  width: 5
+                  height: 5
+                  radius: 3
+                  bg_color: 0x444444
+                  bg_opa: COVER
+                  border_width: 0
+              - obj:
+                  align: CENTER
+                  x: 2
+                  y: 0
+                  width: 7
+                  height: 7
+                  radius: 4
+                  bg_color: 0x999999
+                  bg_opa: COVER
+                  border_width: 0
+              - obj:
+                  align: CENTER
+                  x: 12
+                  y: 0
+                  width: 5
+                  height: 5
+                  radius: 3
+                  bg_color: 0x444444
+                  bg_opa: COVER
+                  border_width: 0
+
+    ###########################################################
+    # STATUS
+    ###########################################################
+    - id: info_page
+      bg_color: 0x111118
+      bg_opa: COVER
+      widgets:
+        - label:
+            align: CENTER
+            y: -115
+            text: "STATUS"
+            text_font: font_body
+            text_color: 0x555555
+
+        - label:
+            id: lbl_info_ceiling
+            align: CENTER
+            y: -55
+            text: "Ceiling  --°F"
+            text_font: font_body_lg
+            text_color: 0xFFFFFF
+
+        - label:
+            id: lbl_info_bench
+            align: CENTER
+            y: -20
+            text: "Bench    --°F"
+            text_font: font_body_lg
+            text_color: 0xFFFFFF
+
+        - obj:
+            align: CENTER
+            y: 8
+            width: 160
+            height: 1
+            bg_color: 0x333340
+            bg_opa: COVER
+            border_width: 0
+
+        - label:
+            id: lbl_info_door
+            align: CENTER
+            y: 30
+            text: "Door     --"
+            text_font: font_body
+            text_color: 0x666666
+
+        - label:
+            id: lbl_info_heater
+            align: CENTER
+            y: 57
+            text: "Heater   --"
+            text_font: font_body
+            text_color: 0x666666
+
+        - label:
+            id: lbl_info_hilimit
+            align: CENTER
+            y: 84
+            text: "Hi-Limit --"
+            text_font: font_body
+            text_color: 0x666666
+
+        - label:
+            id: lbl_info_feedback
+            align: CENTER
+            y: 111
+            text: "${feedback_placeholder_text}"
+            text_font: font_body
+            text_color: 0x666666
+
+        - button:
+            id: btn_clear_fault
+            align: CENTER
+            y: 115
+            width: 180
+            height: 44
+            bg_color: 0xCC3333
+            radius: 22
+            shadow_width: 16
+            shadow_color: 0xFF0000
+            shadow_opa: 20%
+            hidden: true
+            group: main_group
+            on_click:
+              then:
+                - lambda: 'id(clear_fault_pending) = true;'
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "CLEAR FAULT"
+                  text_font: font_body
+                  text_color: 0xFFFFFF
+
+        # Page dots
+        # Page nav — tap zone at bottom
+        - obj:
+            align: BOTTOM_MID
+            y: -15
+            width: 160
+            height: 60
+            bg_opa: TRANSP
+            border_width: 0
+            on_click:
+              then:
+                - lambda: 'id(lv_active_page) = (id(lv_active_page) + 1) % 3;'
+                - lvgl.page.next:
+                    animation: FADE_IN
+                    time: 150ms
+            widgets:
+              - obj:
+                  align: CENTER
+                  x: -10
+                  y: 0
+                  width: 5
+                  height: 5
+                  radius: 3
+                  bg_color: 0x444444
+                  bg_opa: COVER
+                  border_width: 0
+              - obj:
+                  align: CENTER
+                  x: 2
+                  y: 0
+                  width: 5
+                  height: 5
+                  radius: 3
+                  bg_color: 0x444444
+                  bg_opa: COVER
+                  border_width: 0
+              - obj:
+                  align: CENTER
+                  x: 12
+                  y: 0
+                  width: 7
+                  height: 7
+                  radius: 4
+                  bg_color: 0x999999
+                  bg_opa: COVER
+                  border_width: 0

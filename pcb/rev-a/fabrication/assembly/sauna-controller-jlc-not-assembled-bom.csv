@@ -1,0 +1,10 @@
+Comment,Designator,Footprint,LCSC Part #,Assembly Status,Reason
+22uF/50V,C_5V_IN1,C_1210_3225Metric,,Do not have JLC assemble,No suitable JLC match selected for 22uF/50V 1210 MLCC; hand-solder or resolve later.
+7.5A T,F1,Fuseholder_Clip-5x20mm_Schurter_OG_Lateral_P15.00x5.00mm_D1.3mm_Horizontal,C3204125,Do not have JLC assemble,Fuse holders removed from JLC assembly to avoid mechanical/fit risk; hand-solder selected holders.
+1A F,F2,Fuseholder_Clip-5x20mm_Schurter_OG_Lateral_P15.00x5.00mm_D1.3mm_Horizontal,C3204125,Do not have JLC assemble,Fuse holders removed from JLC assembly to avoid mechanical/fit risk; hand-solder selected holders.
+AUX,J_AUX1,"TerminalBlock_Phoenix_MKDS-1,5-2-5.08_1x02_P5.08mm_Horizontal",C8383,Do not have JLC assemble,Terminal block removed from JLC assembly to use preferred exact mechanical part; hand-solder.
+DOOR,J_DOOR1,"TerminalBlock_Phoenix_MKDS-1,5-2-5.08_1x02_P5.08mm_Horizontal",C8383,Do not have JLC assemble,Terminal block removed from JLC assembly to use preferred exact mechanical part; hand-solder.
++24V IN,J_PWR1,"TerminalBlock_Phoenix_MKDS-1,5-2-5.08_1x02_P5.08mm_Horizontal",C8383,Do not have JLC assemble,Terminal block removed from JLC assembly to use preferred exact mechanical part; hand-solder.
+BENCH/CEILING/COIL SAFETY,"J_BENCH1,J_CEILING1,J_COIL1","TerminalBlock_Phoenix_MKDS-1,5-3-5.08_1x03_P5.08mm_Horizontal",C49238,Do not have JLC assemble,Terminal block removed from JLC assembly to use preferred exact mechanical part; hand-solder.
+PANEL,J_PANEL1,"TerminalBlock_Phoenix_MKDS-1,5-4-5.08_1x04_P5.08mm_Horizontal",C122715,Do not have JLC assemble,Terminal block removed from JLC assembly to use preferred exact mechanical part; hand-solder.
+LED STRIP,J_LED1,"TerminalBlock_Phoenix_MKDS-1,5-5-5.08_1x05_P5.08mm_Horizontal",C8459,Do not have JLC assemble,Terminal block removed from JLC assembly to use preferred exact mechanical part; hand-solder.

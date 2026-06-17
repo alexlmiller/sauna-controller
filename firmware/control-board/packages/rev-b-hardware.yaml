@@ -1,0 +1,24 @@
+# Rev B carrier-board hardware that does not exist on Rev A.
+
+output:
+  - platform: gpio
+    pin: ${fault_led_pin}
+    id: fault_led_output
+
+switch:
+  - platform: gpio
+    name: "AUX Output"
+    id: aux_output_switch
+    pin: ${aux_output_pin}
+    restore_mode: ALWAYS_OFF
+
+interval:
+  - interval: 500ms
+    then:
+      - if:
+          condition:
+            lambda: 'return id(fault_latched);'
+          then:
+            - output.turn_on: fault_led_output
+          else:
+            - output.turn_off: fault_led_output

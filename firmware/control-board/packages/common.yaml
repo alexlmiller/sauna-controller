@@ -1,0 +1,651 @@
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  project:
+    name: sauna.open_controller
+    version: "${controller_project_version}"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_TASK_WDT: "y"
+      CONFIG_ESP_TASK_WDT_TIMEOUT_S: "30"
+
+logger:
+  level: INFO
+  baud_rate: 0
+
+# Required for syslog
+time:
+  - platform: homeassistant
+    id: ha_time
+
+# Required for syslog - UDP client
+udp:
+  id: syslog_udp
+  addresses: ${syslog_host}
+
+# Remote syslog to VictoriaLogs via Alloy
+syslog:
+  udp_id: syslog_udp
+  port: 5515
+  level: INFO
+  strip: true
+
+ota:
+  platform: esphome
+  password: ${ota_password}
+
+api:
+  encryption:
+    key: ${api_key}
+
+wifi:
+  ssid: ${wifi_ssid}
+  password: ${wifi_password}
+  ap:
+    ssid: ${friendly_name}_AP
+    password: ${wifi_fallback_pw}
+
+web_server:
+  port: 80
+  
+captive_portal:
+
+############### GLOBALS ###############
+globals:
+  - id: fault_latched # Is The Sauna in Fault
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  - id: last_trip_reason # Last Trip Reason
+    type: std::string
+    restore_value: no
+    initial_value: ""
+  - id: session_start_ms # Sauna Start Time
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+  - id: session_active # Is Sauna in Use
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  - id: door_open_since # Door Open Time
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+  - id: welded_detect_since # Welded Contactor Trip Time
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+  - id: coil_is_on # Track actual coil state for welded detection
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  - id: fault_code_val # Numeric fault enum: 0=none, 1=door, 2=high temp, 3=welded
+    type: uint8_t
+    restore_value: no
+    initial_value: "0"
+  - id: staged_light_r # RGBW staging for coalesced apply
+    type: float
+    restore_value: no
+    initial_value: "0"
+  - id: staged_light_g
+    type: float
+    restore_value: no
+    initial_value: "0"
+  - id: staged_light_b
+    type: float
+    restore_value: no
+    initial_value: "0"
+  - id: staged_light_w
+    type: float
+    restore_value: no
+    initial_value: "0"
+  - id: light_apply_pending # Triggers coalesced RGBW light.control
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+number:
+  - platform: template   # Door-open timeout before tripping (seconds)
+    name: "Door Open Fault Seconds"
+    id: door_open_fault_s
+    min_value: 15
+    max_value: 300
+    step: 5
+    optimistic: true
+    restore_value: true
+    initial_value: 45
+  - platform: template  # Software high-temp trip (°F)
+    name: "Software High Temp °F"
+    id: soft_high_temp_f
+    min_value: 190
+    max_value: 230
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 210
+
+################### INPUTS ###################
+
+binary_sensor:
+
+# ----- Door Sensor -----
+  - platform: gpio
+    id: door_sensor
+    name: "Sauna Door"
+    device_class: door
+    pin:
+      number: ${door_pin}
+      mode:
+        input: true
+        pullup: true
+      inverted: false    # NO reed switch: closed pulls LOW, open pulls HIGH
+    filters:
+      - delayed_on: 100ms
+      - delayed_off: 100ms
+    on_state:
+      then:
+        - logger.log:
+            format: "Door sensor changed to: %s"
+            args: ['x ? "OPEN" : "CLOSED"']
+
+# ----- Relay Feedback Status -----
+  - platform: gpio
+    id: ${feedback_sensor_id}
+    name: "${feedback_sensor_name}"
+    pin:
+      number: ${feedback_pin}
+      mode:
+        input: true
+        pullup: ${feedback_pullup}
+    filters:
+      - lambda: return !x;      # TRUE when relay feedback closed (opto pulls low)
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+
+# ----- High Limit Trip -----  
+  - platform: gpio
+    id: high_limit_trip
+    name: "High Limit Trip"
+    pin:
+      number: ${high_limit_pin}
+      mode:
+        input: true
+        pullup: ${high_limit_pullup}
+    filters:
+      - lambda: return x;      # opto ON (GPIO low) = loop OK; GPIO high = tripped
+      - delayed_on: 100ms
+      - delayed_off: 100ms
+
+# Panel status exports (template binary sensors for packet_transport)
+  - platform: template
+    name: "Fault Latched"
+    id: fault_latched_bs
+    lambda: 'return id(fault_latched);'
+
+  - platform: template
+    name: "Heat Mode Active"
+    id: heat_mode_active
+    lambda: 'return id(sauna_thermostat).mode == climate::CLIMATE_MODE_HEAT;'
+
+  - platform: template
+    name: "Light On"
+    id: light_on
+    lambda: 'return id(sauna_light).current_values.is_on();'
+
+# # ----- Future Opto Monitoring -----
+#   - platform: gpio
+#     id: future_monitoring
+#     name: "Future Monitoring"
+#     pin:
+#       number: GPIO25
+#       mode:
+#         input: true
+#         pullup: true
+#     filters:
+#       - lambda: return !x;      # TRUE when tripped (opto pulls low)
+#       - delayed_on: 100ms
+#       - delayed_off: 100ms
+
+################### TEMP SENSORS ###################
+
+# ----- Inputs -----
+one_wire:
+# Bus 1 Input for Bench Temp Sensor
+  - platform: gpio
+    pin: GPIO26
+    id: bus1
+# Bus 2 Input for Ceiling Temp Sensor 
+  - platform: gpio
+    pin: GPIO27
+    id: bus2
+
+# ----- Sensors -----
+sensor:
+# Bench Temp
+  - platform: dallas_temp
+    one_wire_id: bus1
+    name: "Bench Temp"
+    id: bench_temp_c
+    resolution: 10
+    update_interval: 5s
+# Ceiling Temp
+  - platform: dallas_temp
+    one_wire_id: bus2
+    name: "Ceiling Temp"
+    id: ceiling_temp_c
+    resolution: 10
+    update_interval: 5s
+
+# Panel status exports (template sensors for packet_transport)
+  - platform: template
+    name: "Target Temp Current"
+    id: target_temp_current
+    lambda: 'return id(sauna_thermostat).target_temperature;'
+    update_interval: 5s
+
+  - platform: template
+    name: "Fault Code"
+    id: fault_code_sensor
+    lambda: 'return (float)id(fault_code_val);'
+    update_interval: 1s
+
+  - platform: template
+    name: "Light Brightness"
+    id: light_brightness_current
+    lambda: |-
+      if (id(sauna_light).current_values.is_on())
+        return id(sauna_light).current_values.get_brightness();
+      return 0.0f;
+    update_interval: 2s
+
+  - platform: template
+    name: "Light R"
+    id: light_r_current
+    lambda: 'return id(sauna_light).current_values.get_red();'
+    update_interval: 2s
+
+  - platform: template
+    name: "Light G"
+    id: light_g_current
+    lambda: 'return id(sauna_light).current_values.get_green();'
+    update_interval: 2s
+
+  - platform: template
+    name: "Light B"
+    id: light_b_current
+    lambda: 'return id(sauna_light).current_values.get_blue();'
+    update_interval: 2s
+
+  - platform: template
+    name: "Light W"
+    id: light_w_current
+    lambda: 'return id(sauna_light).current_values.get_white();'
+    update_interval: 2s
+
+################### PANEL COMMAND CONSUMERS ###################
+
+  - platform: packet_transport
+    provider: sauna-panel-wired
+    id: cmd_target_temp
+    on_value:
+      then:
+        - lambda: |-
+            if (std::isnan(x) || x < 1.0f) return;
+            float clamped = std::max(65.5f, std::min(x, 93.5f));
+            auto call = id(sauna_thermostat).make_call();
+            call.set_target_temperature(clamped);
+            call.perform();
+            ESP_LOGI("panel", "Target temp set to %.1f°C", clamped);
+
+  - platform: packet_transport
+    provider: sauna-panel-wired
+    id: cmd_heat_mode
+    on_value:
+      then:
+        - lambda: |-
+            if (std::isnan(x)) return;
+            bool want_heat = (x >= 0.5f);
+            bool is_heat = (id(sauna_thermostat).mode == climate::CLIMATE_MODE_HEAT);
+            if (want_heat == is_heat) return;
+            auto call = id(sauna_thermostat).make_call();
+            call.set_mode(want_heat ? climate::CLIMATE_MODE_HEAT : climate::CLIMATE_MODE_OFF);
+            call.perform();
+            ESP_LOGI("panel", "Heat mode set to %s", want_heat ? "HEAT" : "OFF");
+
+  - platform: packet_transport
+    provider: sauna-panel-wired
+    id: cmd_light_brightness
+    on_value:
+      then:
+        - lambda: |-
+            if (std::isnan(x)) return;
+            float b = std::max(0.0f, std::min(x, 1.0f));
+            if (id(sauna_light).current_values.is_on() &&
+                abs(b - id(sauna_light).current_values.get_brightness()) < 0.01f) return;
+            auto call = id(sauna_light).make_call();
+            call.set_state(b > 0.0f);  // turn on if brightness > 0, off if 0
+            call.set_brightness(b);
+            call.set_transition_length(0);
+            call.perform();
+
+  - platform: packet_transport
+    provider: sauna-panel-wired
+    id: cmd_light_r
+    on_value:
+      then:
+        - lambda: |-
+            if (!std::isnan(x)) { id(staged_light_r) = std::max(0.0f, std::min(x, 1.0f)); id(light_apply_pending) = true; }
+
+  - platform: packet_transport
+    provider: sauna-panel-wired
+    id: cmd_light_g
+    on_value:
+      then:
+        - lambda: |-
+            if (!std::isnan(x)) { id(staged_light_g) = std::max(0.0f, std::min(x, 1.0f)); id(light_apply_pending) = true; }
+
+  - platform: packet_transport
+    provider: sauna-panel-wired
+    id: cmd_light_b
+    on_value:
+      then:
+        - lambda: |-
+            if (!std::isnan(x)) { id(staged_light_b) = std::max(0.0f, std::min(x, 1.0f)); id(light_apply_pending) = true; }
+
+  - platform: packet_transport
+    provider: sauna-panel-wired
+    id: cmd_light_w
+    on_value:
+      then:
+        - lambda: |-
+            if (!std::isnan(x)) { id(staged_light_w) = std::max(0.0f, std::min(x, 1.0f)); id(light_apply_pending) = true; }
+
+  - platform: packet_transport
+    provider: sauna-panel-wired
+    id: cmd_clear_fault_ctr
+    on_value:
+      then:
+        - lambda: |-
+            static float last_ctr = 0.0f;
+            if (x <= 0.0f || x == last_ctr) return;
+            last_ctr = x;
+            float soft_limit_c = (id(soft_high_temp_f).state - 32.0) * 5.0 / 9.0;
+            if (id(fault_latched) && id(ceiling_temp_c).has_state() && id(ceiling_temp_c).state < soft_limit_c) {
+              id(fault_latched) = false;
+              id(fault_code_val) = 0;
+              id(last_trip_reason) = "";
+              ESP_LOGI("panel", "Fault cleared via panel");
+            }
+
+  - platform: packet_transport
+    provider: sauna-panel-wired
+    id: cmd_light_toggle_ctr
+    on_value:
+      then:
+        - lambda: |-
+            static float last_ctr = 0.0f;
+            if (x <= 0.0f || x == last_ctr) return;
+            last_ctr = x;
+            auto call = id(sauna_light).make_call();
+            call.set_state(!id(sauna_light).current_values.is_on());
+            call.perform();
+            ESP_LOGI("panel", "Light toggled via panel");
+
+################### OUTPUTS ###################
+
+output:
+
+# ---------------- Contactor ----------------
+
+  - platform: gpio
+    pin: ${coil_pin}
+    id: coil_output
+
+# ---------------- LED MOSFETS ----------------
+  - platform: ledc
+    pin: ${pwm_r_pin}
+    id: pwm_r
+    frequency: 19531 Hz
+  - platform: ledc
+    pin: ${pwm_g_pin}
+    id: pwm_g
+    frequency: 19531 Hz
+  - platform: ledc
+    pin: ${pwm_b_pin}
+    id: pwm_b
+    frequency: 19531 Hz
+  - platform: ledc
+    pin: ${pwm_w_pin}
+    id: pwm_w
+    frequency: 19531 Hz
+
+################### LED LIGHTS ###################
+
+light:
+  - platform: rgbw
+    name: "Sauna RGBW Light"
+    red: pwm_r
+    green: pwm_g
+    blue: pwm_b
+    white: pwm_w
+    id: sauna_light
+    restore_mode: ALWAYS_OFF
+    default_transition_length: 1s
+
+################### CLIMATE ###################
+climate:
+  - platform: thermostat
+    name: "Sauna Thermostat"
+    id: sauna_thermostat
+    sensor: ceiling_temp_c
+    min_heating_off_time: 240s
+    min_heating_run_time: 240s
+    min_idle_time: 30s
+    # All Celsius internally (HA will display °F)
+    heat_deadband: 1.1         # ≈ 2°F
+    heat_overrun: 1.1          # ≈ 2°F
+    visual:
+      min_temperature: 65.5    # ≈ 150°F
+      max_temperature: 93.5    # ≈ 200°F
+      temperature_step: 0.5    # ≈ 1°F
+    preset:
+      - name: "Standard"
+        default_target_temperature_low: 82.0 # ≈ 180°F
+    default_preset: "Standard"
+
+    heat_action:
+      - if:
+          condition:
+            lambda: 'return !id(fault_latched);'
+          then:
+            - output.turn_on: coil_output
+            - lambda: 'id(coil_is_on) = true;'
+            - logger.log: "Heat action -> contactor ON"
+          else:
+            - output.turn_off: coil_output
+            - lambda: 'id(coil_is_on) = false;'
+            - logger.log: "Heat action blocked (fault latched) -> contactor OFF"
+
+    idle_action:
+      - output.turn_off: coil_output
+      - lambda: 'id(coil_is_on) = false;'
+      - logger.log: "Idle action -> contactor OFF"
+
+    on_state:
+      - logger.log:
+          format: "Climate state changed - Current: %.1f°C, Target: %.1f°C, Mode: %s"
+          args: ['x.current_temperature', 'x.target_temperature', 'x.mode']
+
+
+################### SAFETIES ###################
+
+# ---------------- Clear Fault Button ----------------
+button:
+  - platform: template
+    name: "Clear Fault"
+    on_press:
+      - lambda: |-
+          // Convert configurable limit from °F to °C
+          float soft_limit_c = (id(soft_high_temp_f).state - 32.0) * 5.0 / 9.0;
+          
+          if (id(fault_latched) && id(ceiling_temp_c).has_state() && id(ceiling_temp_c).state < soft_limit_c) {
+            id(fault_latched) = false;
+            id(fault_code_val) = 0;
+            id(last_trip_reason) = "";
+            ESP_LOGI("safety", "Fault cleared by user.");
+          } else if (!id(ceiling_temp_c).has_state()) {
+            ESP_LOGW("safety", "Cannot clear fault: ceiling sensor invalid.");
+          } else {
+            ESP_LOGW("safety", "Cannot clear fault: temperature still above limit (%.1f°C / %.1f°F)", 
+                     id(ceiling_temp_c).state, id(ceiling_temp_c).state * 9.0 / 5.0 + 32.0);
+          }
+
+# ---------------- Safety Monitoring Loop ----------------
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          // ============================================
+          // 1. DOOR OPEN TIMEOUT FAULT
+          // ============================================
+          // Only monitor door when heating mode is enabled
+          if (id(door_sensor).state && id(sauna_thermostat).mode == climate::CLIMATE_MODE_HEAT) {
+            if (id(door_open_since) == 0) {
+              id(door_open_since) = millis();
+              ESP_LOGD("safety", "Door opened while heating - starting timeout timer");
+            } else {
+              uint32_t door_open_ms = millis() - id(door_open_since);
+              uint32_t fault_ms = (uint32_t)(id(door_open_fault_s).state * 1000);
+              
+              if (door_open_ms > fault_ms) {
+                id(fault_latched) = true;
+                id(fault_code_val) = 1;  // DOOR TIMEOUT
+                id(last_trip_reason) = "Door open timeout (" +
+                                        to_string((int)id(door_open_fault_s).state) + "s exceeded)";
+                id(door_open_since) = 0;
+                id(coil_output).turn_off();
+                ESP_LOGW("safety", "FAULT: Door open timeout after %.0fs!", id(door_open_fault_s).state);
+              }
+            }
+          } else {
+            if (id(door_open_since) != 0) {
+              ESP_LOGD("safety", "Door closed or heating disabled - resetting timeout timer");
+            }
+            id(door_open_since) = 0;  // Reset timer when door closes or heating disabled
+          }
+
+          // ============================================
+          // 2. SOFTWARE HIGH TEMPERATURE FAULT
+          // ============================================
+          if (id(ceiling_temp_c).has_state()) {
+            float temp_f = id(ceiling_temp_c).state * 9.0 / 5.0 + 32.0;
+            if (temp_f > id(soft_high_temp_f).state) {
+              id(fault_latched) = true;
+              id(fault_code_val) = 2;  // HIGH TEMP
+              id(last_trip_reason) = "Software high temperature (" +
+                                      to_string((int)temp_f) + "°F > " +
+                                      to_string((int)id(soft_high_temp_f).state) + "°F)";
+              id(coil_output).turn_off();
+              ESP_LOGW("safety", "FAULT: Software high temperature at %.1f°F (limit: %.0f°F)", 
+                       temp_f, id(soft_high_temp_f).state);
+            }
+          }
+
+          // ============================================
+          // 3. WELDED CONTACTOR DETECTION
+          // ============================================
+          // Check if contactor relay feedback shows closed when coil should be OFF
+          bool coil_commanded_on = id(coil_is_on);
+          bool feedback_reports_closed = id(${feedback_sensor_id}).state;
+          
+          if (!coil_commanded_on && feedback_reports_closed) {
+            // Contactor appears welded (relay feedback closed when coil is OFF)
+            if (id(welded_detect_since) == 0) {
+              id(welded_detect_since) = millis();
+              ESP_LOGW("safety", "Possible welded contactor detected (coil OFF but relay feedback closed)");
+            } else if (millis() - id(welded_detect_since) > 3000) {  // 3 second confirmation
+              id(fault_latched) = true;
+              id(fault_code_val) = 3;  // WELDED CONTACTOR
+              id(last_trip_reason) = "Welded contactor detected (relay feedback closed when coil OFF)";
+              id(coil_output).turn_off();
+              id(coil_is_on) = false;
+              id(welded_detect_since) = 0;
+              ESP_LOGE("safety", "FAULT: Welded contactor confirmed after 3s!");
+            }
+          } else {
+            id(welded_detect_since) = 0;  // Reset detection timer
+          }
+
+          // ============================================
+          // 4. ABSOLUTE SAFETY GUARD
+          // ============================================
+          // ALWAYS turn off coil if fault latched or heating mode disabled
+          if (id(fault_latched) || id(sauna_thermostat).mode != climate::CLIMATE_MODE_HEAT) {
+            id(coil_output).turn_off();
+            id(coil_is_on) = false;
+          }
+
+  # RGBW coalescing — apply staged panel channels in one combined call
+  - interval: 100ms
+    then:
+      - lambda: |-
+          if (!id(light_apply_pending)) return;
+          id(light_apply_pending) = false;
+          // Dedup: skip if already at target
+          auto cv = id(sauna_light).current_values;
+          if (cv.is_on() &&
+              abs(cv.get_red() - id(staged_light_r)) < 0.01f &&
+              abs(cv.get_green() - id(staged_light_g)) < 0.01f &&
+              abs(cv.get_blue() - id(staged_light_b)) < 0.01f &&
+              abs(cv.get_white() - id(staged_light_w)) < 0.01f) return;
+          auto call = id(sauna_light).make_call();
+          call.set_red(id(staged_light_r));
+          call.set_green(id(staged_light_g));
+          call.set_blue(id(staged_light_b));
+          call.set_white(id(staged_light_w));
+          call.set_transition_length(0);
+          call.perform();
+
+################### FAULT REPORTING ###################
+
+text_sensor:
+  - platform: template
+    name: "Last Trip Reason"
+    id: last_trip_reason_text
+    lambda: |-
+      return id(last_trip_reason);
+
+################### PANEL TRANSPORT (UART) ###################
+
+uart:
+  - id: panel_uart
+    tx_pin: ${panel_tx_pin}
+    rx_pin: ${panel_rx_pin}
+    baud_rate: 115200
+
+packet_transport:
+  - platform: uart
+    uart_id: panel_uart
+    update_interval: 150ms
+    sensors:
+      - ceiling_temp_c
+      - bench_temp_c
+      - target_temp_current
+      - fault_code_sensor
+      - light_brightness_current
+      - light_r_current
+      - light_g_current
+      - light_b_current
+      - light_w_current
+    binary_sensors:
+      - door_sensor
+      - ${feedback_sensor_id}
+      - high_limit_trip
+      - fault_latched_bs
+      - heat_mode_active
+      - light_on

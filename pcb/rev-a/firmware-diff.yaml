@@ -1,0 +1,33 @@
+# Firmware diff for FAULT LED on GPIO25
+#
+# Apply this to sauna-controller.yaml (in the project root) AFTER the new PCB
+# is installed. Until then, GPIO25 is not driving anything; the YAML below adds
+# an output that mirrors id(fault_latched) so the on-board FAULT LED lights up
+# when the controller has latched a fault.
+#
+# Why GPIO25:
+#   - Verified free in firmware (sauna-controller.yaml:200 already reserves it
+#     as a "Future Monitoring" placeholder, currently commented out).
+#   - Not a boot-strap pin.
+#   - On J_ESP_L pin 9 of the wide-variant DevKitC-32E.
+#
+# How to apply:
+#   1. Open sauna-controller.yaml.
+#   2. Add the `output:` block below to the existing top-level configuration.
+#      If `output:` already exists with the LED PWM channels, append the
+#      new gpio output to the end of that block.
+#   3. Add the lambda inside the existing `interval:` block at line ~509.
+#      The lambda should be inside the existing 1s interval, so the LED
+#      mirrors fault_latched once per second (fast enough for visual).
+#   4. esphome run sauna-controller.yaml to flash.
+
+# ---- ADD to output: section ----
+output:
+  - platform: gpio
+    pin: GPIO25
+    id: fault_led_output
+
+# ---- ADD inside the existing 1s interval: in safety monitoring loop ----
+# (Append to the existing lambda body, near the bottom)
+- lambda: |-
+    id(fault_led_output).set_state(id(fault_latched));
