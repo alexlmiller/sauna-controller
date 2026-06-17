@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# KiCad local state / backups / locks
+*.kicad_prl
+*.lck
+*-backups/
+.history/
+
+# Python tooling (Rev B generator venv + bytecode)
+.venv/
+__pycache__/
+*.pyc
+
+# Regenerable reports & preview artifacts (Rev B workspace)
+rev-b/*.rpt
+rev-b/_layout.svg
+rev-b/silk_*
