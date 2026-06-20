@@ -4,6 +4,16 @@ esphome:
   project:
     name: sauna.open_controller
     version: "${controller_project_version}"
+  on_boot:
+    priority: -100
+    then:
+      - output.turn_off: coil_output
+      - lambda: |-
+          id(coil_is_on) = false;
+          auto call = id(sauna_thermostat).make_call();
+          call.set_mode(climate::CLIMATE_MODE_OFF);
+          call.perform();
+          ESP_LOGI("safety", "Boot safety: thermostat and contactor forced OFF");
 
 esp32:
   board: esp32dev
@@ -304,18 +314,41 @@ sensor:
 
   - platform: packet_transport
     provider: sauna-panel-wired
-    id: cmd_heat_mode
+    id: cmd_heat_on_ctr
     on_value:
       then:
         - lambda: |-
+            static float last_ctr = NAN;
             if (std::isnan(x)) return;
-            bool want_heat = (x >= 0.5f);
-            bool is_heat = (id(sauna_thermostat).mode == climate::CLIMATE_MODE_HEAT);
-            if (want_heat == is_heat) return;
+            if (std::isnan(last_ctr)) { last_ctr = x; return; }
+            if (x <= 0.0f || x == last_ctr) return;
+            last_ctr = x;
+            if (id(fault_latched)) {
+              ESP_LOGW("panel", "Ignoring heat-on command while fault is latched");
+              return;
+            }
+            if (id(sauna_thermostat).mode == climate::CLIMATE_MODE_HEAT) return;
             auto call = id(sauna_thermostat).make_call();
-            call.set_mode(want_heat ? climate::CLIMATE_MODE_HEAT : climate::CLIMATE_MODE_OFF);
+            call.set_mode(climate::CLIMATE_MODE_HEAT);
             call.perform();
-            ESP_LOGI("panel", "Heat mode set to %s", want_heat ? "HEAT" : "OFF");
+            ESP_LOGI("panel", "Heat mode set to HEAT");
+
+  - platform: packet_transport
+    provider: sauna-panel-wired
+    id: cmd_heat_off_ctr
+    on_value:
+      then:
+        - lambda: |-
+            static float last_ctr = NAN;
+            if (std::isnan(x)) return;
+            if (std::isnan(last_ctr)) { last_ctr = x; return; }
+            if (x <= 0.0f || x == last_ctr) return;
+            last_ctr = x;
+            if (id(sauna_thermostat).mode == climate::CLIMATE_MODE_OFF) return;
+            auto call = id(sauna_thermostat).make_call();
+            call.set_mode(climate::CLIMATE_MODE_OFF);
+            call.perform();
+            ESP_LOGI("panel", "Heat mode set to OFF");
 
   - platform: packet_transport
     provider: sauna-panel-wired
@@ -464,6 +497,8 @@ climate:
     min_heating_off_time: 240s
     min_heating_run_time: 240s
     min_idle_time: 30s
+    startup_delay: true
+    on_boot_restore_from: default_preset
     # All Celsius internally (HA will display °F)
     heat_deadband: 1.1         # ≈ 2°F
     heat_overrun: 1.1          # ≈ 2°F
@@ -474,6 +509,7 @@ climate:
     preset:
       - name: "Standard"
         default_target_temperature_low: 82.0 # ≈ 180°F
+        mode: "OFF"
     default_preset: "Standard"
 
     heat_action:
@@ -602,7 +638,14 @@ interval:
           // ============================================
           // 4. ABSOLUTE SAFETY GUARD
           // ============================================
-          // ALWAYS turn off coil if fault latched or heating mode disabled
+          // ALWAYS turn off coil if fault latched or heating mode disabled.
+          // A fault also forces climate OFF so clearing the fault cannot resume heat.
+          if (id(fault_latched) && id(sauna_thermostat).mode != climate::CLIMATE_MODE_OFF) {
+            auto call = id(sauna_thermostat).make_call();
+            call.set_mode(climate::CLIMATE_MODE_OFF);
+            call.perform();
+            ESP_LOGW("safety", "Fault latched -> thermostat forced OFF");
+          }
           if (id(fault_latched) || id(sauna_thermostat).mode != climate::CLIMATE_MODE_HEAT) {
             id(coil_output).turn_off();
             id(coil_is_on) = false;
@@ -643,7 +686,11 @@ text_sensor:
 uart:
   - id: panel_uart
     tx_pin: ${panel_tx_pin}
-    rx_pin: ${panel_rx_pin}
+    rx_pin:
+      number: ${panel_rx_pin}
+      mode:
+        input: true
+        pullup: true
     baud_rate: 115200
 
 packet_transport:

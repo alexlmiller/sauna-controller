@@ -1,0 +1,9 @@
+###############################################################################
+# Wall Panel - M5Stack Dial package bundle
+###############################################################################
+
+packages:
+  core: !include core.yaml
+  hardware: !include hardware-m5dial.yaml
+  interaction: !include interaction-m5dial.yaml
+  ui: !include ui-m5dial.yaml

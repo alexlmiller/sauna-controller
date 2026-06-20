@@ -1,0 +1,229 @@
+###############################################################################
+# Wall Panel - Shared Interaction Logic
+###############################################################################
+
+############### ROTARY ENCODER ###############
+
+sensor:
+  - platform: rotary_encoder
+    id: panel_encoder
+    pin_a:
+      number: GPIO4
+      mode: { input: true, pullup: true }
+    pin_b:
+      number: GPIO42
+      mode: { input: true, pullup: true }
+    resolution: 1
+    on_clockwise:
+      then:
+        - lambda: |-
+            // Context-sensitive: which page is active?
+            auto page = id(lv_active_page);
+            if (page == 0) {
+              // Temp page: draft target only. Heat mode changes require a press.
+              if (!std::isnan(id(local_target_temp))) {
+                id(last_target_interaction_ms) = millis();
+                id(local_target_temp) = std::min(id(local_target_temp) + 1.0f, 200.0f);
+              }
+            } else if (page == 1) {
+              // Light page: adjust brightness (sent immediately, turns on if off)
+              if (!std::isnan(id(local_brightness))) {
+                id(last_brightness_interaction_ms) = millis();
+                id(local_brightness) = std::min(id(local_brightness) + 0.05f, 1.0f);
+                lv_arc_set_value(id(arc_brightness), (int)(id(local_brightness) * 100.0f));
+              }
+            }
+    on_anticlockwise:
+      then:
+        - lambda: |-
+            auto page = id(lv_active_page);
+            if (page == 0) {
+              if (!std::isnan(id(local_target_temp))) {
+                id(last_target_interaction_ms) = millis();
+                id(local_target_temp) = std::max(id(local_target_temp) - 1.0f, 150.0f);
+              }
+            } else if (page == 1) {
+              if (!std::isnan(id(local_brightness))) {
+                id(last_brightness_interaction_ms) = millis();
+                id(local_brightness) = std::max(id(local_brightness) - 0.05f, 0.0f);
+                lv_arc_set_value(id(arc_brightness), (int)(id(local_brightness) * 100.0f));
+              }
+            }
+
+binary_sensor:
+  - platform: gpio
+    id: encoder_button
+    pin:
+      pcf8574: pcf
+      number: 5
+      mode: { input: true }
+      inverted: true
+    on_multi_click:
+      - timing:
+          - ON for at most 500ms
+          - OFF for at least 50ms
+        then:
+          # Short press: context-sensitive
+          - lambda: |-
+              auto page = id(lv_active_page);
+              if (page == 0) {
+                // Temp page: "Set" — send target temp and explicit heat-on command.
+                if (!id(synced) || id(fault_active) || std::isnan(id(local_target_temp))) return;
+                id(last_target_interaction_ms) = millis();
+                id(local_heat_mode) = 1.0f;
+                id(heat_on_ctr) += 1;
+                id(heat_on_pending) = true;
+              } else if (page == 1) {
+                // Light page: toggle lights on/off
+                id(light_toggle_pending) = true;
+              } else if (page == 2) {
+                // Info page: clear fault
+                id(clear_fault_pending) = true;
+              }
+      - timing:
+          - ON for at least 700ms
+        then:
+          # Long press: context-sensitive
+          - lambda: |-
+              auto page = id(lv_active_page);
+              if (page == 0) {
+                // Temp page: explicit heat-off command. Do not resend target temp.
+                if (!id(synced)) return;
+                id(local_heat_mode) = 0.0f;
+                id(heat_off_ctr) += 1;
+                id(heat_off_pending) = true;
+              }
+
+  # Transport-specific sensors are added by packages/wifi.yaml or packages/wired.yaml
+
+############### SCRIPTS ###############
+
+script:
+  - id: update_status_ring
+    then:
+      - lambda: |-
+          uint32_t color;
+          // Guard: before first sync, show gray
+          if (std::isnan(id(local_heat_mode)) || std::isnan(id(current_temp))) {
+            color = 0x555555;
+          } else if (id(fault_active)) {
+            color = 0xFF0000;      // Fault — red
+          } else if (id(local_heat_mode) < 0.5f) {
+            color = 0x555555;      // Heat off — gray
+          } else if (id(heater_running)) {
+            if (!std::isnan(id(local_target_temp)) &&
+                abs(id(current_temp) - id(local_target_temp)) <= 2.0f) {
+              color = 0x00CC66;    // At target — green
+            } else {
+              color = 0xFF6B00;    // Heating — orange
+            }
+          } else {
+            color = 0x3366AA;      // Standby — muted blue
+          }
+          id(status_ring_color) = color;
+      - lvgl.arc.update:
+          id: arc_status_ring
+          indicator:
+            arc_color: !lambda 'return lv_color_hex(id(status_ring_color));'
+      - lvgl.label.update:
+          id: lbl_status
+          text_color: !lambda 'return lv_color_hex(id(status_ring_color));'
+          text: !lambda |-
+            if (std::isnan(id(local_heat_mode)) || std::isnan(id(current_temp)))
+              return std::string("---");
+            if (id(fault_active)) return std::string("FAULT");
+            if (id(local_heat_mode) < 0.5f) return std::string("OFF");
+            if (id(heater_running)) {
+              if (!std::isnan(id(local_target_temp)) &&
+                  abs(id(current_temp) - id(local_target_temp)) <= 2.0f)
+                return std::string("AT TARGET");
+              return std::string("HEATING");
+            }
+            return std::string("IDLE");
+
+  - id: update_light_selection
+    then:
+      # Set outline on active preset circle
+      - lvgl.obj.update:
+          id: btn_preset_warm
+          outline_width: !lambda 'return id(active_preset) == 0 ? 3 : 0;'
+          outline_color: 0x999999
+          outline_pad: 4
+      - lvgl.obj.update:
+          id: btn_preset_sunset
+          outline_width: !lambda 'return id(active_preset) == 1 ? 3 : 0;'
+          outline_color: 0x999999
+          outline_pad: 4
+      - lvgl.obj.update:
+          id: btn_preset_red
+          outline_width: !lambda 'return id(active_preset) == 2 ? 3 : 0;'
+          outline_color: 0x999999
+          outline_pad: 4
+      - lvgl.obj.update:
+          id: btn_preset_blue
+          outline_width: !lambda 'return id(active_preset) == 3 ? 3 : 0;'
+          outline_color: 0x999999
+          outline_pad: 4
+
+  - id: update_light_ring
+    then:
+      - lambda: |-
+          uint32_t color;
+          switch(id(active_preset)) {
+            case 0: color = 0xFFFFFF; break;  // WHITE
+            case 1: color = 0xFFB366; break;  // WARM
+            case 2: color = 0x8B0000; break;  // RED
+            case 3: color = 0x006400; break;  // GREEN
+            default: color = 0xFF6B00; break; // default orange
+          }
+          id(light_ring_color) = color;
+      - lvgl.arc.update:
+          id: arc_brightness
+          indicator:
+            arc_color: !lambda 'return lv_color_hex(id(light_ring_color));'
+
+############### INTERVALS ###############
+
+interval:
+  # Link state detection
+  - interval: 1s
+    then:
+      - lambda: |-
+          bool was_up = id(link_up);
+          bool is_up = (id(last_rx_ms) > 0) && (millis() - id(last_rx_ms) < ${link_timeout_ms});
+          id(link_up) = is_up;
+          if (!was_up && is_up) {
+            id(synced) = false;
+          }
+      - if:
+          condition:
+            lambda: 'return !id(link_up) && millis() > 10000;'
+          then:
+            - lvgl.widget.show: no_link_warning
+          else:
+            - lvgl.widget.hide: no_link_warning
+
+  # UI refresh — push local mirrors to display + send commands via HA
+  - interval: 500ms
+    then:
+      - lambda: 'if (!id(synced)) return;'
+      - if:
+          condition:
+            lambda: 'return !std::isnan(id(local_target_temp));'
+          then:
+            - lvgl.label.update:
+                id: lbl_target_temp
+                text: !lambda |-
+                  float tf = id(local_target_temp);
+                  return str_sprintf("%.0f°F", tf);
+      - if:
+          condition:
+            lambda: 'return !std::isnan(id(local_brightness));'
+          then:
+            - lvgl.arc.update:
+                id: arc_brightness
+                value: !lambda 'return (int)(id(local_brightness) * 100.0f);'
+            - lvgl.label.update:
+                id: lbl_brightness_pct
+                text: !lambda 'return str_sprintf("%d%%", (int)(id(local_brightness) * 100.0f));'
+      # Command sending is handled by transport-specific file (wifi or wired)

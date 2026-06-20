@@ -13,6 +13,9 @@ esphome run firmware/wall-panel/wired.yaml
 
 # WiFi/Home Assistant wall panel for desk testing
 esphome run firmware/wall-panel/wifi.yaml
+
+# M5Stack Dial WiFi/Home Assistant wall panel for UI testing
+esphome run firmware/wall-panel/m5dial-wifi.yaml
 ```
 
 ## Secrets
@@ -60,6 +63,7 @@ firmware/
   wall-panel/
     wired.yaml
     wifi.yaml
+    m5dial-wifi.yaml
     packages/
 
   legacy/rev-a/
@@ -68,7 +72,25 @@ firmware/
 The control board owns safety and actuator control. The wall panel sends
 requests and displays status but is not required for safe operation.
 
+The wall panel sends explicit one-shot commands for heat on/off instead of
+publishing mirrored heater mode. Target-temperature drafts are separate from
+heater mode, so knob turns cannot re-enable heat by replaying stale state.
+
+The control-board firmware boots safe: the thermostat restores from the default
+OFF preset, the contactor output is forced off at boot, and any latched fault
+forces the climate mode OFF before the fault can be cleared.
+
 ## Legacy Rev A
 
 Rev A firmware wrappers are kept in [`firmware/legacy/rev-a/`](../firmware/legacy/rev-a/)
 for early boards only. New component and carrier-PCB builds should use Rev B.
+
+For an installed Rev A system, use only the Rev A wrappers:
+
+```bash
+esphome run firmware/legacy/rev-a/control-board.yaml
+esphome run firmware/legacy/rev-a/wall-panel-wired.yaml
+```
+
+Do not flash `firmware/control-board/rev-b.yaml` to Rev A hardware; the panel
+UART and several I/O pins are different.

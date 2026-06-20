@@ -1,0 +1,288 @@
+###############################################################################
+# Wall Panel - M5Stack Dial Interaction Logic
+###############################################################################
+
+############### ROTARY ENCODER ###############
+
+sensor:
+  - platform: rotary_encoder
+    id: panel_encoder
+    pin_a:
+      number: GPIO40
+      mode: { input: true, pullup: true }
+    pin_b:
+      number: GPIO41
+      mode: { input: true, pullup: true }
+    resolution: 1
+    on_clockwise:
+      then:
+        - lambda: |-
+            auto page = id(lv_active_page);
+            if (page == 0) {
+              if (!std::isnan(id(local_target_temp))) {
+                id(last_target_interaction_ms) = millis();
+                id(local_target_temp) = std::min(id(local_target_temp) + 1.0f, 200.0f);
+              }
+            } else if (page == 1) {
+              if (!std::isnan(id(local_brightness))) {
+                id(last_brightness_interaction_ms) = millis();
+                id(local_brightness) = std::min(id(local_brightness) + 0.05f, 1.0f);
+                lv_arc_set_value(id(arc_brightness), (int)(id(local_brightness) * 100.0f));
+              }
+            }
+    on_anticlockwise:
+      then:
+        - lambda: |-
+            auto page = id(lv_active_page);
+            if (page == 0) {
+              if (!std::isnan(id(local_target_temp))) {
+                id(last_target_interaction_ms) = millis();
+                id(local_target_temp) = std::max(id(local_target_temp) - 1.0f, 150.0f);
+              }
+            } else if (page == 1) {
+              if (!std::isnan(id(local_brightness))) {
+                id(last_brightness_interaction_ms) = millis();
+                id(local_brightness) = std::max(id(local_brightness) - 0.05f, 0.0f);
+                lv_arc_set_value(id(arc_brightness), (int)(id(local_brightness) * 100.0f));
+              }
+            }
+
+############### RING BUTTON ###############
+
+binary_sensor:
+  - platform: gpio
+    id: encoder_button
+    internal: true
+    pin:
+      number: GPIO42
+      mode: { input: true, pullup: true }
+      inverted: true
+    filters:
+      - delayed_on: 20ms
+      - delayed_off: 20ms
+    on_multi_click:
+      - timing:
+          - ON for 20ms to 500ms
+          - OFF for 20ms to 350ms
+          - ON for 20ms to 500ms
+          - OFF for at least 200ms
+        then:
+          - script.execute: dial_single_click
+      - timing:
+          - ON for 20ms to 500ms
+          - OFF for at least 350ms
+        then:
+          - script.execute: dial_next_page
+
+############### SCRIPTS ###############
+
+script:
+  - id: dial_single_click
+    then:
+      - lambda: |-
+          id(dial_click_action) = 0;
+          auto page = id(lv_active_page);
+          if (page == 0) {
+            if (id(local_heat_mode) >= 0.5f) {
+              id(dial_click_action) = 1;  // heat off
+            } else if (!id(fault_active)) {
+              id(dial_click_action) = 2;  // heat on
+            }
+          } else if (page == 1) {
+            id(dial_click_action) = 3;    // toggle lights
+          } else if (page == 2 && id(fault_active)) {
+            id(dial_click_action) = 4;    // clear fault
+          }
+      - if:
+          condition:
+            lambda: 'return id(dial_click_action) == 1;'
+          then:
+            - lambda: |-
+                id(local_heat_mode) = 0.0f;
+                id(heat_off_ctr) += 1;
+            - script.execute: update_status_ring
+            - homeassistant.service:
+                service: climate.set_hvac_mode
+                data:
+                  entity_id: climate.sauna_heater
+                  hvac_mode: "off"
+      - if:
+          condition:
+            lambda: 'return id(dial_click_action) == 2;'
+          then:
+            - lambda: |-
+                id(last_target_interaction_ms) = millis();
+                id(local_heat_mode) = 1.0f;
+                id(heat_on_ctr) += 1;
+            - script.execute: update_status_ring
+            - if:
+                condition:
+                  lambda: 'return !std::isnan(id(local_target_temp));'
+                then:
+                  - homeassistant.service:
+                      service: climate.set_temperature
+                      data:
+                        entity_id: climate.sauna_heater
+                      data_template:
+                        temperature: "{{ target_val }}"
+                      variables:
+                        target_val: |-
+                          return id(local_target_temp);
+            - homeassistant.service:
+                service: climate.set_hvac_mode
+                data:
+                  entity_id: climate.sauna_heater
+                  hvac_mode: heat
+      - if:
+          condition:
+            lambda: 'return id(dial_click_action) == 3;'
+          then:
+            - lambda: |-
+                id(local_light_on) = !id(local_light_on);
+                id(light_toggle_pending) = true;
+            - script.execute: update_light_ring
+      - if:
+          condition:
+            lambda: 'return id(dial_click_action) == 4;'
+          then:
+            - lambda: 'id(clear_fault_pending) = true;'
+      - lambda: 'id(dial_click_action) = 0;'
+
+  - id: dial_next_page
+    then:
+      - lambda: 'id(lv_active_page) = (id(lv_active_page) + 1) % 3;'
+      - lvgl.page.next:
+          animation: NONE
+          time: 0ms
+
+  - id: update_status_ring
+    then:
+      - lambda: |-
+          uint32_t color;
+          if (std::isnan(id(local_heat_mode)) || std::isnan(id(current_temp))) {
+            color = 0x555555;
+          } else if (id(fault_active)) {
+            color = 0xFF0000;
+          } else if (id(local_heat_mode) < 0.5f) {
+            color = 0x555555;
+          } else if (id(heater_running)) {
+            if (!std::isnan(id(local_target_temp)) &&
+                abs(id(current_temp) - id(local_target_temp)) <= 2.0f) {
+              color = 0x00CC66;
+            } else {
+              color = 0xFF6B00;
+            }
+          } else {
+            color = 0x3366AA;
+          }
+          id(status_ring_color) = color;
+      - lvgl.arc.update:
+          id: arc_status_ring
+          indicator:
+            arc_color: !lambda 'return lv_color_hex(id(status_ring_color));'
+      - lvgl.label.update:
+          id: lbl_status
+          text_color: !lambda 'return lv_color_hex(id(status_ring_color));'
+          text: !lambda |-
+            if (std::isnan(id(local_heat_mode)) || std::isnan(id(current_temp)))
+              return std::string("---");
+            if (id(fault_active)) return std::string("FAULT");
+            if (id(local_heat_mode) < 0.5f) return std::string("OFF");
+            if (id(heater_running)) {
+              if (!std::isnan(id(local_target_temp)) &&
+                  abs(id(current_temp) - id(local_target_temp)) <= 2.0f)
+                return std::string("AT TARGET");
+              return std::string("HEATING");
+            }
+            return std::string("IDLE");
+
+  - id: update_light_selection
+    then:
+      - lvgl.obj.update:
+          id: btn_preset_warm
+          outline_width: !lambda 'return id(active_preset) == 0 ? 3 : 0;'
+          outline_color: 0xFFFFFF
+          outline_pad: 3
+      - lvgl.obj.update:
+          id: btn_preset_sunset
+          outline_width: !lambda 'return id(active_preset) == 1 ? 3 : 0;'
+          outline_color: 0xFFFFFF
+          outline_pad: 3
+      - lvgl.obj.update:
+          id: btn_preset_red
+          outline_width: !lambda 'return id(active_preset) == 2 ? 3 : 0;'
+          outline_color: 0xFFFFFF
+          outline_pad: 3
+      - lvgl.obj.update:
+          id: btn_preset_blue
+          outline_width: !lambda 'return id(active_preset) == 3 ? 3 : 0;'
+          outline_color: 0xFFFFFF
+          outline_pad: 3
+
+  - id: update_light_ring
+    then:
+      - lambda: |-
+          uint32_t color;
+          if (!id(local_light_on)) {
+            color = 0x252833;
+          } else {
+            switch(id(active_preset)) {
+              case 0: color = 0xFFFFFF; break;
+              case 1: color = 0xFFB366; break;
+              case 2: color = 0x8B0000; break;
+              case 3: color = 0x006400; break;
+              default: color = 0xFF6B00; break;
+            }
+          }
+          id(light_ring_color) = color;
+      - lvgl.arc.update:
+          id: arc_brightness
+          value: !lambda |-
+            if (!id(local_light_on) || std::isnan(id(local_brightness))) return 0;
+            return (int)(id(local_brightness) * 100.0f);
+          indicator:
+            arc_color: !lambda 'return lv_color_hex(id(light_ring_color));'
+      - lvgl.label.update:
+          id: lbl_brightness_pct
+          text: !lambda |-
+            if (!id(local_light_on)) return std::string("OFF");
+            if (std::isnan(id(local_brightness))) return std::string("--%");
+            return str_sprintf("%d%%", (int)(id(local_brightness) * 100.0f));
+
+############### INTERVALS ###############
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          bool was_up = id(link_up);
+          bool is_up = (id(last_rx_ms) > 0) && (millis() - id(last_rx_ms) < ${link_timeout_ms});
+          id(link_up) = is_up;
+          if (!was_up && is_up) {
+            id(synced) = false;
+          }
+      - if:
+          condition:
+            lambda: 'return !id(link_up) && millis() > 10000;'
+          then:
+            - lvgl.widget.show: no_link_warning
+          else:
+            - lvgl.widget.hide: no_link_warning
+
+  - interval: 500ms
+    then:
+      - lambda: 'if (!id(synced)) return;'
+      - if:
+          condition:
+            lambda: 'return !std::isnan(id(local_target_temp));'
+          then:
+            - lvgl.label.update:
+                id: lbl_target_temp
+                text: !lambda |-
+                  float tf = id(local_target_temp);
+                  return str_sprintf("%.0f°F", tf);
+      - if:
+          condition:
+            lambda: 'return !std::isnan(id(local_brightness));'
+          then:
+            - script.execute: update_light_ring

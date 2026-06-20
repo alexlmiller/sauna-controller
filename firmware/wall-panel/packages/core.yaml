@@ -1,0 +1,125 @@
+###############################################################################
+# Wall Panel - Shared State
+###############################################################################
+
+############### GLOBALS ###############
+globals:
+  # Sync state
+  - id: synced
+    type: bool
+    initial_value: "false"
+
+  # Local mirrors — NaN = not yet synced
+  - id: local_target_temp
+    type: float
+    initial_value: "NAN"
+  - id: local_heat_mode
+    type: float
+    initial_value: "NAN"
+  - id: local_brightness
+    type: float
+    initial_value: "NAN"
+  - id: local_light_on
+    type: bool
+    initial_value: "false"
+  - id: local_light_r
+    type: float
+    initial_value: "NAN"
+  - id: local_light_g
+    type: float
+    initial_value: "NAN"
+  - id: local_light_b
+    type: float
+    initial_value: "NAN"
+  - id: local_light_w
+    type: float
+    initial_value: "NAN"
+
+  # Target-temp draft timestamp — suppresses target echo only, not heat mode.
+  - id: last_target_interaction_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: last_brightness_interaction_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: last_color_interaction_ms
+    type: uint32_t
+    initial_value: "0"
+
+  # One-shot action counters
+  - id: heat_on_ctr
+    type: int
+    initial_value: "0"
+  - id: heat_off_ctr
+    type: int
+    initial_value: "0"
+  - id: clear_fault_ctr
+    type: int
+    initial_value: "0"
+  - id: light_toggle_ctr
+    type: int
+    initial_value: "0"
+
+  # Active preset (-1 = custom/unknown)
+  - id: active_preset
+    type: int
+    initial_value: "-1"
+
+  # Link state
+  - id: last_rx_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: link_up
+    type: bool
+    initial_value: "false"
+
+  # Active page tracker (0=main, 1=light, 2=info)
+  - id: lv_active_page
+    type: int
+    initial_value: "0"
+  - id: dial_click_action
+    type: int
+    initial_value: "0"
+
+  # Status ring color (for cross-lambda access)
+  - id: status_ring_color
+    type: uint32_t
+    initial_value: "0x555555"
+
+  # Transport-agnostic state mirrors
+  - id: fault_active
+    type: bool
+    initial_value: "false"
+  - id: heater_running
+    type: bool
+    initial_value: "false"
+  - id: current_temp
+    type: float
+    initial_value: "NAN"
+
+  # Preset selection timestamp (debounce HA echo for WiFi)
+  - id: preset_set_ms
+    type: uint32_t
+    initial_value: "0"
+
+  # Transport-agnostic command flags
+  - id: heat_on_pending
+    type: bool
+    initial_value: "false"
+  - id: heat_off_pending
+    type: bool
+    initial_value: "false"
+  - id: light_toggle_pending
+    type: bool
+    initial_value: "false"
+  - id: clear_fault_pending
+    type: bool
+    initial_value: "false"
+  - id: preset_pending
+    type: int
+    initial_value: "-1"
+
+  # Light ring color (matches active preset)
+  - id: light_ring_color
+    type: uint32_t
+    initial_value: "0xFF6B00"

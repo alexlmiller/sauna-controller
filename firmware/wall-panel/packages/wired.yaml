@@ -21,7 +21,8 @@ packet_transport:
   update_interval: 150ms
   sensors:
     - cmd_target_temp
-    - cmd_heat_mode
+    - cmd_heat_on_ctr
+    - cmd_heat_off_ctr
     - cmd_light_brightness
     - cmd_light_r
     - cmd_light_g
@@ -68,7 +69,7 @@ sensor:
             id(last_rx_ms) = millis();
             float temp_f = x * 9.0/5.0 + 32.0;
             if (!id(synced)) id(synced) = true;
-            if (millis() - id(last_heater_interaction_ms) > 2000) {
+            if (millis() - id(last_target_interaction_ms) > 2000) {
               id(local_target_temp) = temp_f;
             }
 
@@ -171,19 +172,23 @@ sensor:
 
   ############### COMMAND SENSORS ###############
 
-  # Commands — publish value for 2s after interaction, then NaN
+  # Target updates are draft-state based. Heat mode changes are explicit counters.
   - platform: template
     id: cmd_target_temp
     lambda: |-
-      if (!id(synced) || millis() - id(last_heater_interaction_ms) > 2000) return NAN;
+      if (!id(synced) || std::isnan(id(local_target_temp)) ||
+          millis() - id(last_target_interaction_ms) > 2000) return NAN;
       return (id(local_target_temp) - 32.0f) * 5.0f / 9.0f;
     update_interval: 150ms
 
   - platform: template
-    id: cmd_heat_mode
-    lambda: |-
-      if (!id(synced) || millis() - id(last_heater_interaction_ms) > 2000) return NAN;
-      return id(local_heat_mode);
+    id: cmd_heat_on_ctr
+    lambda: 'return (float)id(heat_on_ctr);'
+    update_interval: 150ms
+
+  - platform: template
+    id: cmd_heat_off_ctr
+    lambda: 'return (float)id(heat_off_ctr);'
     update_interval: 150ms
 
   - platform: template
@@ -297,8 +302,9 @@ binary_sensor:
         - lambda: |-
             id(last_rx_ms) = millis();
             float controller_val = x ? 1.0f : 0.0f;
-            if (millis() - id(last_heater_interaction_ms) > 2000) {
-              id(local_heat_mode) = controller_val;
+            id(local_heat_mode) = controller_val;
+            if (!x) {
+              id(heat_on_pending) = false;
             }
         - script.execute: update_status_ring
         - lvgl.label.update:

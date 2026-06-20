@@ -17,3 +17,7 @@ Legacy files:
 
 Do not use these for a new self-assembled or carrier-PCB build unless you are
 intentionally matching an existing Rev A installation.
+
+The Rev A control-board wrapper keeps the original GPIO14/GPIO4 wall-panel UART
+mapping. The Rev B control-board target uses different panel and I/O pins, so it
+must not be flashed to Rev A hardware.
