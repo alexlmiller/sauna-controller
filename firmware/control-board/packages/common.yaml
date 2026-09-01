@@ -372,8 +372,17 @@ sensor:
       then:
         - lambda: |-
             static float last_ctr = 0.0f;
-            if (x <= 0.0f || x == last_ctr) return;
+            static bool initialized = false;
+            if (std::isnan(x)) return;
+            // Establish a boot baseline; packet transport rebroadcasts the current counter.
+            if (!initialized) {
+              last_ctr = x;
+              initialized = true;
+              return;
+            }
+            if (x == last_ctr) return;
             last_ctr = x;
+            if (x <= 0.0f) return;
             float soft_limit_c = (id(soft_high_temp_f).state - 32.0) * 5.0 / 9.0;
             if (id(fault_latched) && id(ceiling_temp_c).has_state() && id(ceiling_temp_c).state < soft_limit_c) {
               id(fault_latched) = false;
@@ -389,8 +398,17 @@ sensor:
       then:
         - lambda: |-
             static float last_ctr = 0.0f;
-            if (x <= 0.0f || x == last_ctr) return;
+            static bool initialized = false;
+            if (std::isnan(x)) return;
+            // Establish a boot baseline; packet transport rebroadcasts the current counter.
+            if (!initialized) {
+              last_ctr = x;
+              initialized = true;
+              return;
+            }
+            if (x == last_ctr) return;
             last_ctr = x;
+            if (x <= 0.0f) return;
             auto call = id(sauna_light).make_call();
             call.set_state(!id(sauna_light).current_values.is_on());
             call.perform();
