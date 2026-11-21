@@ -1,0 +1,25 @@
+# AW installation: M5Stack Dial, direct UART on Port B.
+substitutions:
+  device_name: sauna-panel-wired
+  friendly_name: Sauna Dial
+  link_timeout_ms: "5000"
+  feedback_sensor_id: contactor_aux_closed
+  feedback_placeholder_text: "Aux --"
+  feedback_on_text: "Aux ON"
+  feedback_off_text: "Aux OFF"
+  panel_tx_pin: GPIO2
+  panel_rx_pin: GPIO1
+  wifi_ssid: !secret wifi_ssid
+  wifi_password: !secret wifi_password
+  ota_password: !secret ota_password
+
+packages:
+  core: !include firmware/wall-panel/packages/core.yaml
+  hardware: !include firmware/wall-panel/packages/hardware-m5dial.yaml
+  interaction: !include firmware/wall-panel/packages/interaction-m5dial-wired.yaml
+  ui: !include firmware/wall-panel/packages/ui-m5dial.yaml
+  transport: !include firmware/wall-panel/packages/transport-wired.yaml
+
+# UART control keeps working without a WiFi connection.
+wifi:
+  reboot_timeout: 0s

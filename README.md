@@ -1,111 +1,130 @@
-# Local & Smart Sauna Controller
+# AW sauna install — Rev A + M5 Dial
 
-Open-source sauna convenience control built around ESPHome and Home Assistant. Control your sauna from anywhere with no cloud dependencies or crappy apps and for 1/3rd the cost of the normal commercial units.
+This branch is configured for your **already-built Rev A control box** and an
+**M5Stack Dial connected by UART**. Use the two files at the repository root:
 
+- `sauna-controller.yaml` → ESP32 in the control box
+- `sauna-panel.yaml` → M5 Dial
 
-The project can be built two ways:
+The Dial controls heat and lighting directly; Home Assistant is optional.
+WiFi is used for firmware updates and optional Home Assistant integration.
+The other firmware targets and Rev B build docs are retained for reference;
+they are not the installation path for this box.
 
-- **Build from components**: hand-wire off-the-shelf modules and DIN parts.
-- **Build with the carrier PCB**: use the Rev B control board PCB for cleaner
-  wiring and integrated low-voltage distribution.
+## 1. Connect the Dial
 
-Both current build paths use the same Rev B firmware and pin map. The optional
-wall panel uses an Elecrow CrowPanel 2.1" rotary display over a short wired UART
-link, with a WiFi/Home Assistant panel target available for desk testing.
+Keep heater mains isolated while checking wiring and flashing. This is convenience
+control: the heater's listed protections and the physical manual-reset high-limit
+must remain in place. See [safety requirements](docs/SAFETY.md).
 
-## Safety
+Use the Dial's **Port B** (black connector) for 3.3 V UART at 115200 baud:
 
-This project is for **convenience control only**. It is not a primary safety
-system and must not replace the sauna heater's listed safety controls.
+| Rev A control board | M5 Dial Port B |
+|---|---|
+| J_PANEL1 pin 1: TX / GPIO14 | White / GPIO1 (RX) |
+| J_PANEL1 pin 2: RX / GPIO4 | Yellow / GPIO2 (TX) |
+| J_PANEL1 pin 4: GND | Black / GND |
 
-- Use only properly rated, UL/ETL/listed components where applicable.
-- Use a heater that already has its required high-limit and safety systems.
-- Have the enclosure, high-voltage wiring, grounding, overcurrent protection,
-  conductor sizing, strain relief, and final installation reviewed and installed
-  by a qualified electrician.
-- Do not rely on ESPHome, Home Assistant, WiFi, the wall panel, or this PCB as
-  life-safety equipment.
+TX and RX cross. This is a short direct UART cable, not Ethernet or RS-485.
+The Rev A board uses the four-position `J_PANEL1` screw terminal.
+Verify connector pin numbering against the [Rev A wiring reference](docs/REV-A-WIRING.md).
 
-Read [`docs/SAFETY.md`](docs/SAFETY.md) before building.
+For initial setup, power the Dial over **USB-C (5 V)** and leave Port B's red
+wire disconnected. For permanent power, its **rear screw terminal accepts
+6–36 V DC**: a suitably fused 24 V supply from the box can feed that terminal,
+with correct polarity and a shared ground. Do not put 24 V on a Grove port or
+GPIO, or connect the board's 5 V panel output to the rear terminal.
+Keep the Dial outside the hot room; its rated operating range is 0–40°C.
+[Official Dial pinout and power specifications](https://docs.m5stack.com/en/core/Dial).
 
-![Controller Box](https://github.com/user-attachments/assets/d93286e9-3aa9-4a17-b4d4-1751c39da36b)
+## 2. Get the firmware and enter WiFi details
 
-## What It Controls
-
-- Heater contactor with a 24 VDC coil
-- Two DS18B20 temperature probes: ceiling and bench
-- Door reed switch
-- Manual-reset high-temp circuit in series with the contactor coil
-- Relay feedback contact for welded/failed relay detection
-- 24 V RGBW LED strip through four PWM MOSFET channels
-- Optional wall panel over direct 3.3 V UART
-
-## User Interface
-
-The controller exposes its entities through Home Assistant and can also be used
-from a phone dashboard or the optional wall panel.
-
-### Home Assistant Device Page
-
-<img width="723" height="761" alt="Home Assistant device page" src="https://github.com/user-attachments/assets/819bb462-3065-4353-bc77-227a327b023d" />
-
-### Phone Dashboard
-
-<img width="606" height="767" alt="Home Assistant phone dashboard" src="https://github.com/user-attachments/assets/f103d0ee-843a-4577-ad8f-8157f9dca8a7" />
-
-## Build Paths
-
-### Option 1: Build From Components
-
-Use an ESP32 DevKitC, MOSFET driver modules, opto input modules, DIN power
-supplies, fusing/protection, and terminal blocks. This is best for prototyping
-or a one-off hand-wired build.
-
-Start here: [`docs/BUILD-FROM-COMPONENTS.md`](docs/BUILD-FROM-COMPONENTS.md)
-
-### Option 2: Build With the Carrier PCB
-
-Use the Rev B control board carrier PCB. This is the preferred path for new
-installs because it reduces point-to-point wiring and integrates the ESP32
-carrier, output drivers, opto inputs, PTC protection, 24 V distribution, 5 V
-conversion, and field terminals.
-
-Start here: [`docs/BUILD-WITH-CARRIER-PCB.md`](docs/BUILD-WITH-CARRIER-PCB.md)
-
-The design philosophy and current hardware rationale are summarized in
-[`docs/DESIGN.md`](docs/DESIGN.md).
-
-## Firmware
-
-Current build targets:
+Use ESPHome **2026.10.0** (the version used to validate this branch).
+If needed, follow [ESPHome's installation instructions](https://esphome.io/guides/installing_esphome/).
 
 ```bash
-# Control board
-esphome run firmware/control-board/rev-b.yaml
-
-# Normal wired wall panel
-esphome run firmware/wall-panel/wired.yaml
-
-# WiFi/Home Assistant wall panel for desk testing
-esphome run firmware/wall-panel/wifi.yaml
+git clone --branch aw-install --single-branch https://github.com/alexlmiller/sauna-controller.git
+cd sauna-controller
+cp secrets.example.yaml secrets.yaml
+openssl rand -base64 32
 ```
 
-See [`docs/FIRMWARE.md`](docs/FIRMWARE.md) for secrets setup, target layout,
-and the legacy Rev A note.
+Edit `secrets.yaml`: enter your 2.4 GHz WiFi name/password, choose unique fallback
+AP and OTA passwords, and paste the generated key into `api_key`. Keep this file
+private; Git ignores it. No logging server or Home Assistant entity IDs are needed.
 
-## Wall Panel
+## 3. Flash both devices over USB
 
-The wall panel is optional. The normal installation uses direct 3.3 V UART over
-a short Cat5e run and gets 5 V power from the control board. The control board
-remains the source of truth for temperature, faults, heat mode, and lighting.
+Flash one device at a time so the serial-port choice is unambiguous. Run these
+commands from the repository root. The first build downloads toolchain files and
+fonts and needs internet access.
 
-See [`docs/WALL-PANEL.md`](docs/WALL-PANEL.md).
+```bash
+# ESP32 in the control box
+esphome run sauna-controller.yaml
 
-## More Detail
+# M5 Dial
+esphome run sauna-panel.yaml
+```
 
-- [`docs/DESIGN.md`](docs/DESIGN.md): design choices and source-of-truth paths.
-- [`docs/SAFETY.md`](docs/SAFETY.md): safety boundaries and installation notes.
-- [`docs/FIRMWARE.md`](docs/FIRMWARE.md): ESPHome targets and package layout.
-- [`docs/WALL-PANEL.md`](docs/WALL-PANEL.md): optional panel behavior and wiring.
-- [`pcb/rev-b/README.md`](pcb/rev-b/README.md): KiCad, fabrication, assembly,
-  and board verification details.
+Select the connected USB serial port for the first flash. If the Dial does not
+enter download mode, disconnect power, hold G0 on its Stamp-S3 module, reconnect
+USB, then release G0. Subsequent updates can use WiFi through the same commands.
+Flash **both** targets from this branch: the wired command protocol is a matched pair.
+
+## 4. Check the installation before enabling heater power
+
+With heater mains still isolated, power the low-voltage box and Dial:
+
+1. Both boot with heat **OFF**. The Dial should show real temperatures and clear
+   its `NO LINK` warning once UART data arrives.
+2. Check bench and ceiling temperatures are plausible and correctly assigned.
+   Each probe has its own bus; no sensor address needs to be entered.
+3. On the status page, open/close the door and check the displayed state follows it.
+   Verify the contactor auxiliary feedback and high-limit indication against the
+   physical circuit. An open high-limit must physically interrupt coil power.
+4. Test the lights, brightness, and presets. Check R/G/B/W against the reference
+   if the colors do not match.
+5. Verify heat OFF and power cycling leave the contactor de-energized. Have the
+   installer verify the contactor, manual-reset high-limit, and heater safety
+   circuit before restoring heater power for a supervised first heat.
+
+The thermostat has a **four-minute startup/minimum-off delay**, so requesting heat
+may show IDLE before the contactor energizes. Faults force heat OFF; clearing a
+fault does not restart heating. Investigate the cause before clearing it.
+
+## Using the Dial
+
+- **Single press** of the ring, or single tap on the page background: next page
+  (temperature → lights → status).
+- **Turn** on the temperature page: adjust target, 150–200°F. Turning alone does
+  not turn heat on.
+- **Double press/tap** on the temperature page: toggle heat ON/OFF.
+- **Turn** on the lights page: brightness; **double press/tap**: lights ON/OFF.
+  Tap a preset button to choose its color.
+- **Double press/tap** on the status page: request fault clearing, after the cause
+  has been corrected.
+
+The control box remains authoritative. A lost UART connection displays `NO LINK`;
+it is **not an emergency stop** and does not itself turn off an active session.
+Use the heater's physical disconnect when needed.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| `NO LINK` or blank temperatures | Common ground, crossed TX/RX, correct Port B wires, both root firmware files flashed. |
+| Heat stays OFF / fault shown | Read status, check door/high-limit/aux feedback; correct the cause first. |
+| Heat says IDLE | Allow the four-minute minimum-off/startup delay; check target is above current temperature. |
+| One temperature missing | Probe power/data/GND and the correct dedicated bus. |
+| Dial turns off on external power | Rear terminal polarity and 6–36 V supply; use USB to isolate power issues. |
+
+For logs, use `esphome logs sauna-controller.yaml` or `esphome logs sauna-panel.yaml`.
+Optional Home Assistant setup: add the control box through the ESPHome integration
+using the API key in `secrets.yaml`; the Dial does not need Home Assistant.
+
+## Wiring reference
+
+[Rev A wiring diagram and pin table](docs/REV-A-WIRING.md) ·
+[Rev A KiCad schematic](pcb/rev-a/sauna-controller.kicad_sch) ·
+[Safety requirements](docs/SAFETY.md)

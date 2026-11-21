@@ -1,5 +1,9 @@
 # Legacy Rev A
 
+> **AW installation:** use the [Rev A + wired M5 Dial instructions](../README.md)
+> and [Rev A wiring reference](REV-A-WIRING.md). The general targets below are
+> retained for other installations.
+
 Rev A was an early board/hand-wired compatibility target. It is kept only for
 the few existing early systems.
 

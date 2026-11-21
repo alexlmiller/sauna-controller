@@ -1,5 +1,9 @@
 # Build From Components
 
+> **AW installation:** use the [Rev A + wired M5 Dial instructions](../README.md)
+> and [Rev A wiring reference](REV-A-WIRING.md). The general targets below are
+> retained for other installations.
+
 This path builds the sauna controller from off-the-shelf modules and DIN parts
 instead of the custom carrier PCB. It is useful for prototyping or a one-off
 hand-wired build.

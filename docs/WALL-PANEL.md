@@ -1,5 +1,9 @@
 # Wall Panel
 
+> **AW installation:** use the [Rev A + wired M5 Dial instructions](../README.md)
+> and [Rev A wiring reference](REV-A-WIRING.md). The general targets below are
+> retained for other installations.
+
 The wall panel is an optional local interface. It is not the safety controller;
 the control board remains the source of truth.
 

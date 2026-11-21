@@ -1,5 +1,9 @@
 # Design Notes
 
+> **AW installation:** use the [Rev A + wired M5 Dial instructions](../README.md)
+> and [Rev A wiring reference](REV-A-WIRING.md). The general targets below are
+> retained for other installations.
+
 This file captures the durable design rationale for the current sauna
 controller. It intentionally avoids copying large YAML or KiCad details; the
 live source files listed below are authoritative.

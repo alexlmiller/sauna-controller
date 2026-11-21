@@ -1,5 +1,9 @@
 # Build With the Carrier PCB
 
+> **AW installation:** use the [Rev A + wired M5 Dial instructions](../README.md)
+> and [Rev A wiring reference](REV-A-WIRING.md). The general targets below are
+> retained for other installations.
+
 This is the preferred path for new installs. The Rev B control board carrier
 PCB replaces most point-to-point low-voltage module wiring with one organized
 board.

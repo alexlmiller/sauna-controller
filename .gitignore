@@ -9,3 +9,6 @@
 
 # PCB fab: keep the (text) Gerbers/drill/CPL/BOM; the upload zip is regenerable
 pcb/*/fabrication/*.zip
+
+# Python regression checks
+__pycache__/

@@ -321,8 +321,9 @@ sensor:
             static float last_ctr = NAN;
             if (std::isnan(x)) return;
             if (std::isnan(last_ctr)) { last_ctr = x; return; }
-            if (x <= 0.0f || x == last_ctr) return;
+            if (x == last_ctr) return;
             last_ctr = x;
+            if (x <= 0.0f) return;
             if (id(fault_latched)) {
               ESP_LOGW("panel", "Ignoring heat-on command while fault is latched");
               return;
@@ -342,8 +343,9 @@ sensor:
             static float last_ctr = NAN;
             if (std::isnan(x)) return;
             if (std::isnan(last_ctr)) { last_ctr = x; return; }
-            if (x <= 0.0f || x == last_ctr) return;
+            if (x == last_ctr) return;
             last_ctr = x;
+            if (x <= 0.0f) return;
             if (id(sauna_thermostat).mode == climate::CLIMATE_MODE_OFF) return;
             auto call = id(sauna_thermostat).make_call();
             call.set_mode(climate::CLIMATE_MODE_OFF);

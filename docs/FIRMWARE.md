@@ -1,5 +1,9 @@
 # Firmware
 
+> **AW installation:** use the [Rev A + wired M5 Dial instructions](../README.md)
+> and [Rev A wiring reference](REV-A-WIRING.md). The general targets below are
+> retained for other installations.
+
 Current builds use the Rev B firmware targets.
 
 ## Targets
