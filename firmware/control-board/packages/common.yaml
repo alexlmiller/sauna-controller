@@ -66,6 +66,9 @@ captive_portal:
 
 ############### GLOBALS ###############
 globals:
+  - id: ceiling_last_valid_ms
+    type: uint32_t
+    initial_value: "0"
   - id: fault_latched # Is The Sauna in Fault
     type: bool
     restore_value: no
@@ -94,7 +97,7 @@ globals:
     type: bool
     restore_value: no
     initial_value: "false"
-  - id: fault_code_val # Numeric fault enum: 0=none, 1=door, 2=high temp, 3=welded
+  - id: fault_code_val # Fault enum: 0=none, 1=door, 2=high temp, 3=welded, 4=sensor, 5=high-limit
     type: uint8_t
     restore_value: no
     initial_value: "0"
@@ -250,13 +253,17 @@ sensor:
     id: ceiling_temp_c
     resolution: 10
     update_interval: 5s
+    on_value:
+      then:
+        - lambda: |-
+            if (std::isfinite(x)) id(ceiling_last_valid_ms) = millis();
 
 # Panel status exports (template sensors for packet_transport)
   - platform: template
     name: "Target Temp Current"
     id: target_temp_current
     lambda: 'return id(sauna_thermostat).target_temperature;'
-    update_interval: 5s
+    update_interval: 150ms
 
   - platform: template
     name: "Fault Code"
@@ -276,19 +283,19 @@ sensor:
   - platform: template
     name: "Light R"
     id: light_r_current
-    lambda: 'return id(sauna_light).current_values.get_red();'
+    lambda: 'return id(sauna_light).current_values.get_red() * id(sauna_light).current_values.get_color_brightness();'
     update_interval: 2s
 
   - platform: template
     name: "Light G"
     id: light_g_current
-    lambda: 'return id(sauna_light).current_values.get_green();'
+    lambda: 'return id(sauna_light).current_values.get_green() * id(sauna_light).current_values.get_color_brightness();'
     update_interval: 2s
 
   - platform: template
     name: "Light B"
     id: light_b_current
-    lambda: 'return id(sauna_light).current_values.get_blue();'
+    lambda: 'return id(sauna_light).current_values.get_blue() * id(sauna_light).current_values.get_color_brightness();'
     update_interval: 2s
 
   - platform: template
@@ -418,13 +425,7 @@ sensor:
             if (x == last_ctr) return;
             last_ctr = x;
             if (x <= 0.0f) return;
-            float soft_limit_c = (id(soft_high_temp_f).state - 32.0) * 5.0 / 9.0;
-            if (id(fault_latched) && id(ceiling_temp_c).has_state() && id(ceiling_temp_c).state < soft_limit_c) {
-              id(fault_latched) = false;
-              id(fault_code_val) = 0;
-              id(last_trip_reason) = "";
-              ESP_LOGI("panel", "Fault cleared via panel");
-            }
+            id(try_clear_fault).execute();
 
   - platform: packet_transport
     provider: sauna-panel-wired
@@ -517,7 +518,11 @@ climate:
     heat_action:
       - if:
           condition:
-            lambda: 'return !id(fault_latched);'
+            lambda: |-
+              return !id(fault_latched) &&
+                     id(ceiling_temp_c).has_state() && std::isfinite(id(ceiling_temp_c).state) &&
+                     id(ceiling_last_valid_ms) != 0 && millis() - id(ceiling_last_valid_ms) <= 15000 &&
+                     id(high_limit_trip).has_state() && !id(high_limit_trip).state;
           then:
             - output.turn_on: coil_output
             - lambda: 'id(coil_is_on) = true;'
@@ -541,31 +546,55 @@ climate:
 ################### SAFETIES ###################
 
 # ---------------- Clear Fault Button ----------------
+script:
+  - id: try_clear_fault
+    then:
+      - lambda: |-
+          const float soft_limit_c = (id(soft_high_temp_f).state - 32.0f) * 5.0f / 9.0f;
+          const bool clear_allowed =
+              id(ceiling_temp_c).has_state() && std::isfinite(id(ceiling_temp_c).state) &&
+              id(ceiling_last_valid_ms) != 0 && millis() - id(ceiling_last_valid_ms) <= 15000 &&
+              id(ceiling_temp_c).state < soft_limit_c &&
+              id(high_limit_trip).has_state() && !id(high_limit_trip).state &&
+              id(door_sensor).has_state() && !id(door_sensor).state &&
+              id(${feedback_sensor_id}).has_state() && !id(${feedback_sensor_id}).state;
+          if (!id(fault_latched) || !clear_allowed) return;
+          auto call = id(sauna_thermostat).make_call();
+          call.set_mode(climate::CLIMATE_MODE_OFF);
+          call.perform();
+          id(coil_output).turn_off();
+          id(coil_is_on) = false;
+          id(fault_latched) = false;
+          id(fault_code_val) = 0;
+          id(last_trip_reason) = "";
+          ESP_LOGI("safety", "Fault cleared; heat remains OFF");
+
 button:
   - platform: template
     name: "Clear Fault"
     on_press:
-      - lambda: |-
-          // Convert configurable limit from °F to °C
-          float soft_limit_c = (id(soft_high_temp_f).state - 32.0) * 5.0 / 9.0;
-          
-          if (id(fault_latched) && id(ceiling_temp_c).has_state() && id(ceiling_temp_c).state < soft_limit_c) {
-            id(fault_latched) = false;
-            id(fault_code_val) = 0;
-            id(last_trip_reason) = "";
-            ESP_LOGI("safety", "Fault cleared by user.");
-          } else if (!id(ceiling_temp_c).has_state()) {
-            ESP_LOGW("safety", "Cannot clear fault: ceiling sensor invalid.");
-          } else {
-            ESP_LOGW("safety", "Cannot clear fault: temperature still above limit (%.1f°C / %.1f°F)", 
-                     id(ceiling_temp_c).state, id(ceiling_temp_c).state * 9.0 / 5.0 + 32.0);
-          }
+      - script.execute: try_clear_fault
 
 # ---------------- Safety Monitoring Loop ----------------
 interval:
   - interval: 1s
     then:
       - lambda: |-
+          // Bypass thermostat minimum-run timers when sensor/limit inputs fail.
+          const bool ceiling_valid =
+              id(ceiling_temp_c).has_state() && std::isfinite(id(ceiling_temp_c).state) &&
+              id(ceiling_last_valid_ms) != 0 && millis() - id(ceiling_last_valid_ms) <= 15000;
+          const bool high_limit_ok = id(high_limit_trip).has_state() && !id(high_limit_trip).state;
+          if (id(sauna_thermostat).mode == climate::CLIMATE_MODE_HEAT || id(coil_is_on)) {
+            if (!ceiling_valid || !high_limit_ok) {
+              id(fault_latched) = true;
+              id(fault_code_val) = !ceiling_valid ? 4 : 5;
+              id(last_trip_reason) = !ceiling_valid ? "Ceiling sensor missing, invalid or stale" : "High-limit loop open";
+              id(coil_output).turn_off();
+              id(coil_is_on) = false;
+            }
+          }
+
           // ============================================
           // 1. DOOR OPEN TIMEOUT FAULT
           // ============================================
@@ -662,11 +691,13 @@ interval:
           // Dedup: skip if already at target
           auto cv = id(sauna_light).current_values;
           if (cv.is_on() &&
-              abs(cv.get_red() - id(staged_light_r)) < 0.01f &&
-              abs(cv.get_green() - id(staged_light_g)) < 0.01f &&
-              abs(cv.get_blue() - id(staged_light_b)) < 0.01f &&
+              abs(cv.get_red() * cv.get_color_brightness() - id(staged_light_r)) < 0.01f &&
+              abs(cv.get_green() * cv.get_color_brightness() - id(staged_light_g)) < 0.01f &&
+              abs(cv.get_blue() * cv.get_color_brightness() - id(staged_light_b)) < 0.01f &&
               abs(cv.get_white() - id(staged_light_w)) < 0.01f) return;
           auto call = id(sauna_light).make_call();
+          // ESPHome normalizes RGB; preserve the requested channel amplitudes.
+          call.set_color_brightness(std::max(id(staged_light_r), std::max(id(staged_light_g), id(staged_light_b))));
           call.set_red(id(staged_light_r));
           call.set_green(id(staged_light_g));
           call.set_blue(id(staged_light_b));

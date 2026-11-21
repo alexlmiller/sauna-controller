@@ -86,6 +86,7 @@ script:
           if (!id(link_up) || !id(synced)) return;
           auto page = id(lv_active_page);
           if (page == 0) {
+            if (!std::isfinite(id(local_heat_mode))) return;
             if (id(local_heat_mode) >= 0.5f) {
               id(dial_click_action) = 1;  // heat off
             } else if (!id(fault_active)) {
@@ -233,7 +234,7 @@ interval:
           bool was_up = id(link_up);
           bool is_up = (id(last_rx_ms) > 0) && (millis() - id(last_rx_ms) < ${link_timeout_ms});
           id(link_up) = is_up;
-          if (!was_up && is_up) {
+          if (!is_up || !was_up) {
             id(synced) = false;
           }
       - if:

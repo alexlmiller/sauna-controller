@@ -1,208 +1,134 @@
 # AW sauna install — Rev A + M5 Dial
 
-This branch is configured for your **already-built Rev A control box** and an
-**M5Stack Dial connected by UART**. Use the two files at the repository root:
+For the assembled Rev A box, with a wired M5 Dial and Home Assistant.
+The Dial works independently of Home Assistant; WiFi provides updates and HA access.
 
-- `sauna-controller.yaml` → ESP32 in the control box
-- `sauna-panel.yaml` → M5 Dial
+Give this README to Claude Code:
 
-The Dial controls heat and lighting directly; Home Assistant is optional.
-WiFi is used for firmware updates and optional Home Assistant integration.
-The other firmware targets and Rev B build docs are retained for reference;
-they are not the installation path for this box.
-
-## Start here: give this README to Claude Code
-
-Ask Claude:
-
-> Set up this Rev A sauna controller and wired M5 Dial using the `aw-install`
-> branch and the agent workflow below. Prepare and validate both firmware builds,
-> guide me through USB connections, flash both devices, and integrate the control
-> box into my Home Assistant. Preserve existing configuration and keep heat OFF.
-> Ask me to confirm the physical safety checks before flashing and before any
-> supervised heater test. Report what you verified and what still needs a human.
-
-The box is already assembled. The owner handles wiring, USB connections, and
-physical checks; Claude handles configuration, builds, flashing, and Home Assistant
-setup where its tools allow. If Claude cannot access USB or Home Assistant, it
-should give the exact remaining step and resume verification after the owner does it.
+> Follow this guide to configure and flash both devices, then add the control box
+> to my Home Assistant. Preserve existing settings and secrets. Keep heat OFF;
+> guide me through the physical checks and report anything you cannot verify.
 
 ## 1. Connect the Dial
 
-Keep heater mains isolated while checking wiring and flashing. This is convenience
-control: the heater's listed protections and the physical manual-reset high-limit
-must remain in place. See [safety requirements](docs/SAFETY.md).
+Isolate heater mains before wiring or flashing. Keep the heater's listed protections
+and manual-reset high-limit intact. See [safety requirements](docs/SAFETY.md).
 
-Use the Dial's **Port B** (black connector) for 3.3 V UART at 115200 baud:
+**Power:** run a separately fused feed from the box's **24 VDC supply distribution**
+to the Dial's **rear power terminal**, matching its +/− markings. Use supply ground
+for −, shared with the control board. Do not use the switched contactor-coil feed.
+The rear terminal accepts 6–36 VDC. Keep the Dial outside the hot room (0–40°C rating).
+[Dial specifications](https://docs.m5stack.com/en/core/Dial).
 
-| Rev A control board | M5 Dial Port B |
+**UART:** use Port B (black connector), 3.3 V signals at 115200 baud:
+
+| Rev A `J_PANEL1` | Dial Port B |
 |---|---|
-| J_PANEL1 pin 1: TX / GPIO14 | White / GPIO1 (RX) |
-| J_PANEL1 pin 2: RX / GPIO4 | Yellow / GPIO2 (TX) |
-| J_PANEL1 pin 4: GND | Black / GND |
+| Pin 1: TX / GPIO14 | White / GPIO1 RX |
+| Pin 2: RX / GPIO4 | Yellow / GPIO2 TX |
+| Pin 4: GND | Black / GND |
+| Pin 3: +5 V | Leave disconnected |
 
-TX and RX cross. This is a short direct UART cable, not Ethernet or RS-485.
-The Rev A board uses the four-position `J_PANEL1` screw terminal.
-Verify connector pin numbering against the [Rev A wiring reference](docs/REV-A-WIRING.md).
+Leave Port B's **red wire disconnected**. Never put 24 V on a Grove port or GPIO.
+[Rev A wiring diagram and connector pins](docs/REV-A-WIRING.md).
 
-For initial flashing, power the Dial from the computer's **USB-C (5 V)**.
-For permanent power, the box's existing regulated **5 V panel supply can feed
-USB-C through a suitable 5 V USB-C power lead/adapter**: `J_PANEL1` pin 3 = +5 V,
-pin 4 = GND. Check polarity, cable voltage drop, and available supply capacity.
-Disconnect that power feed before plugging into the computer for USB flashing.
+## 2. Claude: prepare firmware
 
-**Leave Port B's red wire disconnected.** It is on the Dial's `+5VOUT` rail,
-isolated by D8 from the internal supply; it is not the input for powering the
-Dial. This follows the [manufacturer schematic, page 2](https://m5stack-doc.oss-cn-shenzhen.aliyuncs.com/499/Sch_M5Dial.pdf).
-The separate rear screw terminal accepts **6–36 V DC**, not the board's 5 V
-panel supply. Do not put 24 V on a Grove port or GPIO.
-Keep the Dial outside the hot room; its rated operating range is 0–40°C.
-[Official Dial pinout and power specifications](https://docs.m5stack.com/en/core/Dial).
+Reuse an existing `aw-install` checkout and preserve local changes. Otherwise:
 
-## 2. Claude: prepare and validate
+```bash
+git clone --branch aw-install --single-branch https://github.com/alexlmiller/sauna-controller.git
+cd sauna-controller
+```
 
-1. Inspect the working directory, repository instructions, Git status, available
-   ESPHome version, USB access, and existing Home Assistant connection/tools.
-   Reuse an existing `aw-install` checkout; preserve local changes and secrets.
-   If the repository is not present:
+- Use **ESPHome 2026.10.0**. Ask before installing missing dependencies;
+  prefer a project-local environment. [ESPHome installation](https://esphome.io/guides/installing_esphome/).
+- Ask for missing WiFi details, HA access, and the connected USB device.
+- Create `secrets.yaml` from `secrets.example.yaml` only if absent. Have the owner
+  enter WiFi credentials securely; generate unique OTA/AP passwords and a 32-byte
+  base64 API key. Preserve existing keys. Never publish secrets or expanded configs.
+- Use only the root targets below. Keep device names `sauna-controller` and
+  `sauna-panel-wired`; UART routing depends on them. Keep safety settings intact.
 
-   ```bash
-   git clone --branch aw-install --single-branch https://github.com/alexlmiller/sauna-controller.git
-   cd sauna-controller
-   ```
+```bash
+esphome config sauna-controller.yaml
+esphome config sauna-panel.yaml
+esphome compile sauna-controller.yaml
+esphome compile sauna-panel.yaml
+python3 -m unittest discover -s tests
+```
 
-2. Use ESPHome **2026.10.0**, the version validated here. If unavailable, propose
-   a project-local installation and get approval before installing dependencies.
-   See [ESPHome installation](https://esphome.io/guides/installing_esphome/).
-3. Ask only for missing information: 2.4 GHz WiFi details, Home Assistant URL/access,
-   and which device the owner has connected. Have the owner enter secrets locally
-   or use an approved secure channel; never print credentials or paste them into
-   chat, commits, or logs. Copy `secrets.example.yaml` to `secrets.yaml` **only if
-   the latter does not exist**. Generate a unique 32-byte base64 API key and unique
-   OTA/fallback AP passwords directly into the ignored secrets file. Do not
-   overwrite existing keys. No syslog server is needed.
-4. Keep the device names `sauna-controller` and `sauna-panel-wired`: the UART
-   provider names depend on them. Use only the two root targets, not the Rev B,
-   CrowPanel, or WiFi Dial targets. Keep heat limits and safety logic unchanged.
-5. Validate and build both targets before flashing. Treat config output as
-   sensitive and do not publish expanded configs. Run from the repository root:
-
-   ```bash
-   esphome config sauna-controller.yaml
-   esphome config sauna-panel.yaml
-   esphome compile sauna-controller.yaml
-   esphome compile sauna-panel.yaml
-   python3 -m unittest discover -s tests
-   ```
-
-The first build downloads toolchain files and fonts and needs internet access.
-Do not use sample/fixture credentials in the flashed firmware.
+First builds need internet access. Do not flash placeholder credentials.
 
 ## 3. Claude: flash both devices
 
-After builds pass, confirm the owner has isolated heater mains, checked the
-low-voltage wiring, and connected the intended device over USB. Request one
-approval for flashing both identified devices; then guide the cable swap without
-repeating the approval. Identify the actual serial port rather than guessing.
+After builds pass, confirm heater mains are isolated and wiring is checked.
+Obtain approval to flash both devices, then connect **one at a time** over USB.
+Identify each serial port; replace `SERIAL_PORT` below. Use computer USB-C to power
+and flash the Dial with its external 24 V feed disconnected.
 
 ```bash
-# Replace SERIAL_PORT with the verified port for each connected device.
+# Control-box ESP32
 esphome upload sauna-controller.yaml --device SERIAL_PORT
 esphome logs sauna-controller.yaml --device SERIAL_PORT
 
-# After the owner connects the Dial:
+# M5 Dial, after swapping the USB cable
 esphome upload sauna-panel.yaml --device SERIAL_PORT
 esphome logs sauna-panel.yaml --device SERIAL_PORT
 ```
 
-Flash one device at a time. If the Dial does not enter download mode, ask the
-owner to disconnect power, hold G0 on its Stamp-S3 module, reconnect USB, then
-release G0. Flash **both** targets from this branch: the UART protocol is a
-matched pair. Record each device's observed IP and verify boot/WiFi logs without
-exposing credentials. Subsequent uploads can use the verified device IP.
+If the Dial will not flash: disconnect power, hold G0 on its Stamp-S3 module,
+connect USB, then release G0. Flash both targets; they use a matched UART protocol.
+Verify boot/WiFi logs and record both IPs. Later uploads can use the device IP.
 
-## 4. Check the installation before enabling heater power
+## 4. Check before enabling heater power
 
-With heater mains still isolated, power the low-voltage box and Dial:
+With heater mains still isolated, reconnect normal low-voltage power:
 
-1. Both boot with heat **OFF**. The Dial should show real temperatures and clear
-   its `NO LINK` warning once UART data arrives.
-2. Check bench and ceiling temperatures are plausible and correctly assigned.
-   Each probe has its own bus; no sensor address needs to be entered.
-3. On the status page, open/close the door and check the displayed state follows it.
-   Verify the contactor auxiliary feedback and high-limit indication against the
-   physical circuit. An open high-limit must physically interrupt coil power.
-4. Test the lights, brightness, and presets. Check R/G/B/W against the reference
-   if the colors do not match.
-5. Verify heat OFF and power cycling leave the contactor de-energized. Have the
-   installer verify the contactor, manual-reset high-limit, and heater safety
-   circuit before restoring heater power for a supervised first heat.
+- Heat boots **OFF**; the Dial shows temperatures without `NO LINK`.
+- Bench/ceiling readings match the probes; door status follows the reed switch.
+- Verify auxiliary feedback and high-limit status against the physical circuit.
+  The high-limit must physically interrupt coil power.
+- Check lights, brightness, and all four presets.
+- Confirm OFF and power cycling leave the contactor de-energized. Have the
+  installer verify the heater safety circuit before a supervised first heat.
 
-The thermostat has a **four-minute startup/minimum-off delay**, so requesting heat
-may show IDLE before the contactor energizes. Faults force heat OFF; clearing a
-fault does not restart heating. Investigate the cause before clearing it.
+Allow **four minutes** for the thermostat's startup/minimum-off delay. Correct a
+fault's cause before clearing it: close the door, restore valid ceiling readings
+and the high-limit loop, and verify the contactor is off. Clearing does not restart
+heat. `NO LINK` does
+not stop an active heating session—use the physical disconnect when needed.
 
-## 5. Claude: integrate with Home Assistant
+## 5. Claude: add Home Assistant
 
-Use the owner's existing authorized Home Assistant tools/session. Inspect for an
-existing entry first and avoid duplicates. If adding the integration requires
-approval in that environment, prepare the exact controller host and request it
-once. If no setup-capable tool is available, guide the owner through the UI.
-Do not edit Home Assistant's `.storage` files.
+Use authorized HA tools or guide the owner through the UI. Reuse an existing
+integration entry; do not edit `.storage` files.
 
-- Add the **control box** through **Settings → Devices & services → Add integration
-  → ESPHome**, or accept its discovered entry. Use its observed IP/hostname,
-  native API port **6053**, and the existing `api_key` from local `secrets.yaml`.
-- The **wired Dial does not expose a Home Assistant API** and needs no HA entry.
-  No permission for device-initiated HA actions is required.
-- Confirm the control-box device is available. Discover its actual entity IDs;
-  do not assume IDs from another installation. Verify thermostat, RGBW light,
-  bench/ceiling temperatures, door, auxiliary feedback, high-limit, and fault
-  entities. Keep thermostat mode OFF throughout setup.
-- Compare live temperature/door readings with the Dial and owner observations.
-  If approved by the owner, test a lighting change through HA and confirm the
-  Dial follows it. Do not start heat, clear a real fault, or create automatic
-  heating schedules as an integration test.
+1. Add **ESPHome** under **Settings → Devices & services**, or accept discovery.
+   Use the control box's IP, port **6053**, and `api_key` from `secrets.yaml`.
+2. Add only the control box. The wired Dial needs no HA entry or action permissions.
+3. Discover actual entity IDs. Verify thermostat, RGBW light, temperatures, door,
+   auxiliary feedback, high-limit, and fault status. Keep heat OFF.
+4. Compare HA readings with the Dial. Test lighting with the owner's agreement.
+   Do not start heat, clear real faults, or create heating schedules during setup.
 
-[Official ESPHome integration documentation](https://www.home-assistant.io/integrations/esphome/).
-The firmware already exposes the entities; no HA YAML package or custom integration
-is needed. Use the integration's device page for initial operation.
+[HA integration reference](https://www.home-assistant.io/integrations/esphome/).
+If tools cannot access USB or HA, give the owner the exact step, then verify the
+result. Finish with firmware version/commit, IPs, HA device link, entity IDs, and
+remaining physical checks. Keep credentials out of the handoff.
 
-Finish with a concise handoff: flashed commit/ESPHome version, both observed IPs,
-HA device link and discovered entity IDs, checks completed, and unresolved physical
-checks. Keep secrets out of the report. The supervised first heat is a separate,
-explicit owner action after the installation checks above.
+## Dial controls
 
-## Using the Dial
-
-- **Single press** of the ring, or single tap on the page background: next page
-  (temperature → lights → status).
-- **Turn** on the temperature page: adjust target, 150–200°F. Turning alone does
-  not turn heat on.
-- **Double press/tap** on the temperature page: toggle heat ON/OFF.
-- **Turn** on the lights page: brightness; **double press/tap**: lights ON/OFF.
-  Tap a preset button to choose its color.
-- **Double press/tap** on the status page: request fault clearing, after the cause
-  has been corrected.
-
-The control box remains authoritative. A lost UART connection displays `NO LINK`;
-it is **not an emergency stop** and does not itself turn off an active session.
-Use the heater's physical disconnect when needed.
-
-## Troubleshooting
-
-| Symptom | Check |
+| Action | Result |
 |---|---|
-| `NO LINK` or blank temperatures | Common ground, crossed TX/RX, correct Port B wires, both root firmware files flashed. |
-| Heat stays OFF / fault shown | Read status, check door/high-limit/aux feedback; correct the cause first. |
-| Heat says IDLE | Allow the four-minute minimum-off/startup delay; check target is above current temperature. |
-| One temperature missing | Probe power/data/GND and the correct dedicated bus. |
-| Dial turns off on external power | Check the 5 V USB-C feed under load and polarity; Port B red is not a power input. |
+| Single ring press or background tap | Next page: temperature → lights → status |
+| Turn on temperature page | Adjust target, 150–200°F; does not start heat |
+| Double ring press on temperature page | Heat ON/OFF |
+| Turn on lights page | Adjust brightness |
+| Double ring press on lights page | Lights ON/OFF |
+| Tap a color button | Select preset |
+| Double ring press on status page | Request fault clearing |
 
-For logs, use `esphome logs sauna-controller.yaml` or `esphome logs sauna-panel.yaml`.
-
-## Wiring reference
-
-[Rev A wiring diagram and pin table](docs/REV-A-WIRING.md) ·
-[Rev A KiCad schematic](pcb/rev-a/sauna-controller.kicad_sch) ·
-[Safety requirements](docs/SAFETY.md)
+For `NO LINK`, check common ground, crossed TX/RX, Port B, and both firmware versions.
+For IDLE, check target temperature and the four-minute delay. For power trouble,
+check the rear terminal's polarity and 24 V feed under load.

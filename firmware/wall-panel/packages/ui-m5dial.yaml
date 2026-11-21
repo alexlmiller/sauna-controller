@@ -9,7 +9,7 @@ font:
     id: font_hero
     size: 52
     bpp: 4
-    glyphs: " 0123456789°"
+    glyphs: " -0123456789°"
   - file: "gfonts://Montserrat@400"
     id: font_body
     size: 16
@@ -43,9 +43,6 @@ lvgl:
       on_single_click:
         then:
           - script.execute: dial_next_page
-      on_double_click:
-        then:
-          - script.execute: dial_single_click
       widgets:
         - arc:
             id: arc_status_ring
@@ -133,9 +130,6 @@ lvgl:
       on_single_click:
         then:
           - script.execute: dial_next_page
-      on_double_click:
-        then:
-          - script.execute: dial_single_click
       widgets:
         - arc:
             id: arc_brightness
@@ -247,9 +241,6 @@ lvgl:
       on_single_click:
         then:
           - script.execute: dial_next_page
-      on_double_click:
-        then:
-          - script.execute: dial_single_click
       widgets:
         - label:
             align: CENTER
