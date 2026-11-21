@@ -20,7 +20,7 @@ flowchart LR
   ceiling[Ceiling DS18B20] -->|GPIO27 / 3.3 V / GND| pcb
   pcb -->|24 V and R/G/B/W switched returns| leds[RGBW strip]
   pcb -->|TX14 → RX1 / RX4 ← TX2 / GND| dial[M5 Dial Port B]
-  psu -->|Separate fused feed to rear DC terminal| dial
+  pcb -->|Fused 5 V and GND via USB-C power adapter| dial
 ```
 
 ## Rev A GPIO map
@@ -57,6 +57,11 @@ pin-1 marking, not an assumed left/right orientation when looking into the box.
 | `J_BENCH1` / `J_CEILING1` | 1 = 3.3 V, 2 = data, 3 = GND |
 | `J_LED1` | 1 = R−, 2 = G−, 3 = B−, 4 = W−, 5 = fused +24 V |
 
-For the USB/rear-terminal powered Dial setup, leave `J_PANEL1` pin 3 and the
-Dial Port B red wire disconnected. Route the high-limit between `J_COIL1`
-pins 1 and 2, with the coil between pins 2 and 3; never bridge out the high-limit.
+For permanent Dial power, connect `J_PANEL1` pin 3 (+5 V) and pin 4 (GND) to a
+suitable USB-C power lead/adapter. Disconnect this feed when using computer USB
+for flashing. Leave the Dial Port B red wire disconnected: the manufacturer's
+[schematic, page 2](https://m5stack-doc.oss-cn-shenzhen.aliyuncs.com/499/Sch_M5Dial.pdf)
+places it on `+5VOUT` behind D8, not on the input supply.
+
+Route the high-limit between `J_COIL1` pins 1 and 2, with the coil between pins
+2 and 3; never bridge out the high-limit.
